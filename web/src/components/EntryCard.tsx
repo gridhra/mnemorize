@@ -13,6 +13,8 @@ type Props = {
   /** 画面が表示している学習日（YYYY-MM-DD）。「あと何日後か」の計算に使う。 */
   today: string
   onChanged: (entry: Entry) => void
+  /** 記録が削除されたときに呼ぶ。一覧から外し、復習の件数を取り直すのは呼び出し元の仕事。 */
+  onDeleted?: (id: string) => void
 }
 
 /** YYYY-MM-DD 同士の日数の差（to − from）。 */
@@ -52,7 +54,7 @@ function reviewLogLine(log: ReviewLog): string {
   return ja.review.logEvent(at, what)
 }
 
-export function EntryCard({ entry, today, onChanged }: Props) {
+export function EntryCard({ entry, today, onChanged, onDeleted }: Props) {
   const [editing, setEditing] = useState(false)
   const [revisions, setRevisions] = useState<Revision[] | null>(null)
   const [historyOpen, setHistoryOpen] = useState(false)
@@ -137,6 +139,17 @@ export function EntryCard({ entry, today, onChanged }: Props) {
     try {
       const res = entry.retired_at ? await api.unretire(entry.id) : await api.retire(entry.id)
       onChanged(res.entry)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : ja.error.generic)
+    }
+  }
+
+  /** 記録そのものを消す。本文・画像・録音・復習の記録も一緒に消え、元に戻せない。 */
+  async function removeEntry() {
+    if (!confirm(ja.entry.deleteConfirm)) return
+    try {
+      await api.deleteEntry(entry.id)
+      onDeleted?.(entry.id)
     } catch (e) {
       setError(e instanceof Error ? e.message : ja.error.generic)
     }
@@ -250,6 +263,15 @@ export function EntryCard({ entry, today, onChanged }: Props) {
             <button type="button" class="button ghost" onClick={() => void resetSchedule()}>
               {ja.entry.resetScheduleAction}
             </button>
+            {/*
+              ここから下は「記録そのものを消す」操作。上の「もう復習しない」（予定を止めるだけ）
+              とは結果が違うので、区切り線で分けて最下部に置き、注釈を常に添える。
+            */}
+            <hr class="more-menu-sep" />
+            <button type="button" class="button danger" onClick={() => void removeEntry()}>
+              {ja.entry.delete}
+            </button>
+            <small class="hint">{ja.entry.deleteHint}</small>
           </div>
         </details>
       </footer>

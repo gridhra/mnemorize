@@ -92,4 +92,13 @@ describe('設定の保存（不正な値は ValidationError）', () => {
     expect(() => putSettings({ boundary_hour: 6, auto_retire: 'yes' })).toThrow(ValidationError)
     expect(getSettings().boundary_hour).toBe(4) // 既定値のまま
   })
+
+  test('不正な値のエラーは、どの設定キーの誤りかを field に持つ', () => {
+    expect.assertions(1)
+    try {
+      putSettings({ daily_review_limit: 0 })
+    } catch (e) {
+      expect((e as { field?: string }).field).toBe('daily_review_limit')
+    }
+  })
 })

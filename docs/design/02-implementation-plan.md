@@ -56,7 +56,7 @@
 - 新設`POST /api/transcriptions/:id/dismiss`（マイグレーション`0004_transcription_dismissed.sql`）：失敗した文字起こしジョブを一覧から閉じる。音声ファイルは残るので、その日を開き直せば再試行できる。
 - 新設`POST /api/export/open`：書き出し・控えの保存先をFinderで開く。データ置き場配下のパスだけを許可する。
 - `GET /api/entries/:id`のレスポンスに`retrievability`（今の想起見込み。0〜1）を追加した。既存の`server/services/scheduler.ts`の計算をそのまま使う読み出し専用の追加で、スケジューラのパラメータやDBスキーマは変えていない。
-- 設定画面（`web/src/pages/Settings.tsx`）はサーバーの400エラー文をラベル文言と付き合わせて、どの入力欄の話かを判定している（`FIELD_MATCH`）。`server/services/settings.ts`のバリデーションエラーの先頭には、対応する画面ラベルと同じ文字列を必ず置く決まりになっている——ラベルの文言を変えるときは両方を合わせて直すこと（`snapshot_copy_dir`だけは画面ラベルが「控えのコピー先（任意）」なのに対し、判定には「控えのコピー先」という短い形を使っている。サーバーのメッセージに「（任意）」を含めないため）。
+- 設定画面（`web/src/pages/Settings.tsx`）は、サーバーの400エラー応答が持つ`field`（どの設定キーの誤りか。例：`daily_review_limit`）でどの入力欄に赤字を出すか決めている。`server/services/settings.ts`の`SettingsValidationError`が検証時に`field`を持たせ、`server/app.ts`の共通エラーハンドラがそれを`{ error, field }`のJSONにする。`web/src/api.ts`の`ApiError`が例外にも`field`を載せる。ラベル文言（`web/src/i18n/ja.ts`）とは独立しているので、ラベルの文言を変えても表示先は壊れない。
 
 ## 人の手で確認が必要なこと
 
@@ -76,3 +76,7 @@
 ## 改名（2026-09-15）
 
 正式名称がmnemorizeに決まり、内部の符号 `srw` をすべて `mnemorize` に改名した（package名、画面タイトル、データ置き場 `~/Library/Application Support/mnemorize/`、DBファイル `mnemorize.sqlite`、環境変数 `MNEMORIZE_DATA_DIR` / `MNEMORIZE_FAKE_NOW` / `MNEMORIZE_RUN_WHISPER` / `MNEMORIZE_SERVE_STATIC` / `MNEMORIZE_PORT`、書き出し・スナップショットのファイル名接頭辞）。改名時点で実データは存在しなかったため移行処理は無い。リポジトリは https://github.com/gridhra/mnemorize 。
+
+## 画面の再設計で決まったこと（設計05からの差分。段階7）（続き）
+
+- 2026-09-15：既定パスをこのマシンの実パスに固定し、候補探索はフォールバックに位置づけ直した（表示と実態の不一致バグの修正）。

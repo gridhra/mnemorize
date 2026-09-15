@@ -87,6 +87,8 @@ export type Health = {
   whisper_model_path: string
   whisper_model_configured: boolean
   whisper_model_exists: boolean
+  whisper_model_effective_path: string | null
+  whisper_model_used_fallback: boolean
   boundary_hour: number
   today: string
   now: string
@@ -177,6 +179,20 @@ export type ReviewResult = {
   auto_retired: boolean
 }
 
+/**
+ * API がエラー応答で返す `field`（どの設定キーの誤りかなど）を持つ例外。
+ * `field` が無い応答（大半のエラー）では undefined のまま。
+ */
+export class ApiError extends Error {
+  constructor(
+    message: string,
+    public readonly field?: string,
+  ) {
+    super(message)
+    this.name = 'ApiError'
+  }
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(path, {
     ...init,
@@ -184,7 +200,9 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   })
   const text = await res.text()
   const body = text ? JSON.parse(text) : {}
-  if (!res.ok) throw new Error(body?.error ?? `HTTP ${res.status}`)
+  if (!res.ok) {
+    throw new ApiError(body?.error ?? `HTTP ${res.status}`, typeof body?.field === 'string' ? body.field : undefined)
+  }
   return body as T
 }
 
@@ -243,6 +261,8 @@ export const api = {
   /** 記録 1 件を取り直す（追記の文字起こしが終わったあとなど）。 */
   entry: (id: string) => request<{ entry: Entry }>(`/api/entries/${id}`),
   revisions: (id: string) => request<{ revisions: Revision[] }>(`/api/entries/${id}/revisions`),
+  /** 記録そのものを削除する（「復習を終える」とは別。不要な記録の掃除用）。 */
+  deleteEntry: (id: string) => request<{ ok: true }>(`/api/entries/${id}`, { method: 'DELETE' }),
   retire: (id: string) => request<{ entry: Entry }>(`/api/entries/${id}/retire`, { method: 'POST' }),
   unretire: (id: string) => request<{ entry: Entry }>(`/api/entries/${id}/unretire`, { method: 'POST' }),
   reviewsToday: () => request<ReviewQueue>('/api/reviews/today'),

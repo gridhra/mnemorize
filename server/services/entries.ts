@@ -1,9 +1,11 @@
 // 記録（エントリ）の作成・更新・履歴・日付一覧。ルートは薄く、ロジックはここ。
-import { getDb } from '../db/connection.ts'
+import { getDb, dataDir } from '../db/connection.ts'
 import { isDateString, localDate, now as clockNow, toLocalIso } from '../adapters/clock.ts'
 import { boundaryHour } from './settings.ts'
-import { createInitialState, retrievability, type ScheduleState } from './scheduler.ts'
+import { createInitialState, retrievability } from './scheduler.ts'
 import { resetSchedule, writeScheduleState } from './reviews.ts'
+import { toState } from './schedule-state.ts'
+import { deleteAttachmentFile } from '../adapters/files.ts'
 
 export type EntryRow = {
   id: string
@@ -65,10 +67,12 @@ export type RevisionRow = {
   created_at: string
 }
 
-/** 入力が不正なときに投げる。ルート側が 400 に変換する。 */
-export class ValidationError extends Error {}
-/** 対象が見つからないときに投げる。ルート側が 404 に変換する。 */
-export class NotFoundError extends Error {}
+// エラー型は循環インポートを避けるため services/errors.ts にある。ここでは import かつ
+// re-export して、既存の「entries.ts から ValidationError / NotFoundError を import する」
+// 呼び出し側との互換を保つ（import を伴わない `export { X } from 'mod'` だけだと、
+// このファイル自身のコードから NotFoundError / ValidationError を参照できない）。
+import { ValidationError, NotFoundError } from './errors.ts'
+export { ValidationError, NotFoundError }
 
 const ENTRY_COLUMNS = `id, day_date, title, body_md, review_enabled, retired_at,
   created_at, updated_at, sort_order, schedule_reset_at`
@@ -85,25 +89,6 @@ export function headlineOf(title: string | null, bodyMd: string): string {
   return sentence.length > 60 ? `${sentence.slice(0, 60)}…` : sentence
 }
 
-/**
- * schedule_state の 1 行をスケジューラの状態に直す。
- * services/reviews.ts の同名の変換と同じ対応づけ（あちらは非公開なので、ここでも同じ形で持つ）。
- */
-function toScheduleState(row: ScheduleRow): ScheduleState {
-  return {
-    due: new Date(row.due),
-    // enable_short_term: false なので New / Review しか現れない（scheduler.ts の規約 6）。
-    state: row.state === 'New' ? 'New' : 'Review',
-    stability: row.stability,
-    difficulty: row.difficulty,
-    elapsed_days: row.elapsed_days ?? 0,
-    scheduled_days: row.scheduled_days ?? 0,
-    reps: row.reps,
-    lapses: row.lapses,
-    last_review: row.last_review ? new Date(row.last_review) : null,
-  }
-}
-
 function decorate(row: EntryRow, now: Date = clockNow()): Entry {
   const db = getDb()
   const schedule = db
@@ -118,7 +103,7 @@ function decorate(row: EntryRow, now: Date = clockNow()): Entry {
     ...row,
     headline: headlineOf(row.title, row.body_md),
     schedule,
-    retrievability: schedule ? retrievability(toScheduleState(schedule), now, boundaryHour()) : null,
+    retrievability: schedule ? retrievability(toState(schedule), now, boundaryHour()) : null,
     attachments,
   }
 }
@@ -287,6 +272,36 @@ export function retireEntry(id: string, now: Date = clockNow()): Entry {
     appendLifecycleLog(id, 'retire', nowIso)
   })()
   return getEntry(id)
+}
+
+/**
+ * 記録そのものを削除する（不要な記録の掃除用。「復習を終える」とは別）。
+ * まず DB の行を消し（review_logs・schedule_state・entry_revisions は ON DELETE CASCADE で entries と
+ * 一緒に消える。transcription_jobs は ON DELETE SET NULL なので明示的に消す）、
+ * その後に添付ファイルの実体を消す。行→ファイルの順にするのは、途中でファイル削除が失敗しても
+ * DB 上は既に消えている一貫した状態にするため（添付単体の削除がファイル→行の順で、
+ * 削除が半端に終わると DB に残った行がもう無いファイルを指す不整合を起こしうると指摘されたのを踏まえる）。
+ */
+export async function deleteEntry(id: string): Promise<void> {
+  const db = getDb()
+  const before = db
+    .query<EntryRow, [string]>(`SELECT ${ENTRY_COLUMNS} FROM entries WHERE id = ?`)
+    .get(id)
+  if (!before) throw new NotFoundError(`記録が見つかりません: ${id}`)
+
+  const attachments = db
+    .query<AttachmentRow, [string]>('SELECT * FROM attachments WHERE entry_id = ?')
+    .all(id)
+
+  db.transaction(() => {
+    db.query('DELETE FROM transcription_jobs WHERE entry_id = ?').run(id)
+    db.query('DELETE FROM entries WHERE id = ?').run(id)
+  })()
+
+  for (const a of attachments) {
+    // ファイルが既に無くても失敗にしない（adapters/files.ts の既存の関数に任せる）。
+    await deleteAttachmentFile(dataDir(), a.rel_path)
+  }
 }
 
 /** 卒業の取り消し。 */

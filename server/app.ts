@@ -30,7 +30,12 @@ export function createApp(options: { serveStaticWeb?: boolean } = {}): Hono {
   // 後続担当はここに 1 行足す：
 
   app.onError((err, c) => {
-    if (err instanceof ValidationError) return c.json({ error: err.message }, 400)
+    if (err instanceof ValidationError) {
+      // field を持つ検証エラー（例：SettingsValidationError）は、どの入力欄の誤りかを
+      // 一緒に返す。持たないエラーは従来どおり { error } だけ。
+      const field = 'field' in err && typeof err.field === 'string' ? err.field : undefined
+      return c.json(field ? { error: err.message, field } : { error: err.message }, 400)
+    }
     if (err instanceof NotFoundError) return c.json({ error: err.message }, 404)
     console.error(err)
     return c.json({ error: 'サーバー内部でエラーが起きました' }, 500)

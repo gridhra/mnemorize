@@ -2,9 +2,10 @@
 # check-text-hook.sh — Claude Code の PostToolUse hook（Edit|Write）。
 #
 # 標準入力から渡される hook イベントの JSON を読み、編集されたファイルが
-# web/src/i18n/ja.ts か Markdown（.md）なら scripts/check-text.ts でそのファイル
-# だけを検査する。違反があれば標準エラーに出して終了コード 2 を返す
-# （Claude Code は終了コード 2 の標準エラーをモデルへの追加指示として渡す）。
+# web/src/i18n/ja.ts か画面（.tsx）か Markdown（.md）なら scripts/check-text.ts で
+# そのファイルだけを検査する（.tsx は「UI 文言の直書き」の検査）。違反があれば
+# 標準エラーに出して終了コード 2 を返す（Claude Code は終了コード 2 の標準エラーを
+# モデルへの追加指示として渡す）。
 # 対象外のファイルは何もせず終了コード 0。
 #
 # jq に依存しないよう、JSON の取り出しは bun -e の小さなスクリプトで行う。
@@ -43,6 +44,8 @@ esac
 
 case "$FILE_PATH" in
   */web/src/i18n/ja.ts|web/src/i18n/ja.ts)
+    ;;
+  *.tsx)
     ;;
   *.md)
     ;;

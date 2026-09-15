@@ -31,7 +31,7 @@ export type AsrResult = {
 }
 
 export type AsrOptions = {
-  /** モデルファイルの絶対パス。省略時は設定 → 既定の置き場の順に探す。 */
+  /** モデルファイルの絶対パス。省略時は設定の値を使う。 */
   modelPath?: string
   /** 初期プロンプト。省略時は設定の用語リストから組み立てる。 */
   prompt?: string
@@ -53,22 +53,47 @@ export class AsrError extends Error {}
 
 export const DEFAULT_TIMEOUT_MS = 10 * 60 * 1000
 
-/** 設定が空のときに順に探すモデルファイル。 */
+/**
+ * 設定のパスにモデルファイルが無いときの保険として順に探す候補。
+ * 設定の既定値（server/services/settings.ts の DEFAULT_WHISPER_MODEL_PATH）は
+ * この最初の候補と同じ実パスだが、意味は別：こちらは「設定の値が使えないときの保険」であって
+ * 「標準の場所を探す」機能ではない（設定に値があれば必ずそちらを優先する）。
+ */
 export const MODEL_CANDIDATES = [
   join(homedir(), '.cache', 'whisper-cpp', 'ggml-large-v3-turbo.bin'),
   join(homedir(), '.cache', 'whisper-cpp', 'ggml-large-v3-turbo-q5_0.bin'),
 ]
 
-/** 設定のモデルパス、無ければ既定の置き場を順に探す。見つからなければ null。 */
-export async function resolveModelPath(configured?: string): Promise<string | null> {
-  const fromSettings = configured ?? getSettings().whisper_model_path
-  if (fromSettings && fromSettings.length > 0) {
-    return (await Bun.file(fromSettings).exists()) ? fromSettings : null
+/** モデルパスの解決結果。設定の値そのものが使えたか、保険の候補に回ったかを区別する。 */
+export type ModelStatus = {
+  /** 設定 whisper_model_path の値（空文字もありうる）。 */
+  configuredPath: string
+  /** 設定の値のファイルが実在するか。 */
+  configuredExists: boolean
+  /** 実際に使うパス。設定の値が使えればそれ、使えなければ保険の候補、どちらも無ければ null。 */
+  effectivePath: string | null
+  /** 保険の候補を使うことになったか（設定の値が使えなかった場合のみ true になりうる）。 */
+  usedFallback: boolean
+}
+
+/** 設定のモデルパスを優先し、無ければ保険の候補を順に探す。 */
+export async function resolveModelStatus(configured?: string): Promise<ModelStatus> {
+  const configuredPath = configured ?? getSettings().whisper_model_path
+  const configuredExists = configuredPath.length > 0 && (await Bun.file(configuredPath).exists())
+  if (configuredExists) {
+    return { configuredPath, configuredExists: true, effectivePath: configuredPath, usedFallback: false }
   }
   for (const candidate of MODEL_CANDIDATES) {
-    if (await Bun.file(candidate).exists()) return candidate
+    if (await Bun.file(candidate).exists()) {
+      return { configuredPath, configuredExists: false, effectivePath: candidate, usedFallback: true }
+    }
   }
-  return null
+  return { configuredPath, configuredExists: false, effectivePath: null, usedFallback: false }
+}
+
+/** 設定のモデルパス、無ければ保険の候補を順に探す。見つからなければ null。 */
+export async function resolveModelPath(configured?: string): Promise<string | null> {
+  return (await resolveModelStatus(configured)).effectivePath
 }
 
 /**
@@ -161,10 +186,13 @@ export function joinSegmentTexts(segments: { text: string }[]): string {
 /** 実際に whisper-cli を起動するアダプタ。 */
 export const whisperCliAdapter: AsrAdapter = {
   async transcribe(wavPath, opts, onSegment) {
-    const modelPath = await resolveModelPath(opts.modelPath)
+    const configured = opts.modelPath ?? getSettings().whisper_model_path
+    const modelPath = await resolveModelPath(configured)
     if (!modelPath) {
       throw new AsrError(
-        'whisper.cpp のモデルファイルが見つかりません。設定でモデルのパスを指定してください。',
+        configured && configured.length > 0
+          ? `モデルファイルが見つかりません：${configured}`
+          : 'whisper.cpp のモデルファイルが見つかりません。設定でモデルのパスを指定してください。',
       )
     }
     const prompt = opts.prompt ?? buildPrompt(getSettings().glossary)

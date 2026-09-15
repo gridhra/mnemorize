@@ -11,6 +11,7 @@ const { getDb, resetDbCache, dbPath } = await import('../db/connection.ts')
 const { runMigrations, migrationFiles } = await import('../db/migrate.ts')
 const {
   createEntry,
+  deleteEntry,
   getEntry,
   headlineOf,
   listDay,
@@ -24,6 +25,17 @@ const {
 } = await import('./entries.ts')
 const { search } = await import('./search.ts')
 const { submitReview } = await import('./reviews.ts')
+const { addAttachment } = await import('./attachments.ts')
+const { dataDir } = await import('../db/connection.ts')
+
+// 1x1 の透明 PNG（attachments.test.ts と同じもの）。
+const PNG_BASE64 =
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII='
+
+function pngFile(name = 'a.png'): File {
+  const bytes = Uint8Array.from(atob(PNG_BASE64), (c) => c.charCodeAt(0))
+  return new File([bytes], name, { type: 'image/png' })
+}
 
 beforeEach(() => {
   const db = getDb()
@@ -191,5 +203,35 @@ describe('全文検索', () => {
     updateEntry(e.id, { body_md: '新しい内容のメモ' })
     expect(search('新しい内容')).toHaveLength(1)
     expect(search('古い内容')).toHaveLength(0)
+  })
+})
+
+describe('記録の削除', () => {
+  test('削除すると entries・schedule_state・review_logs・attachments の行と添付ファイルが消える', async () => {
+    const e = createEntry({ body_md: '削除するテスト録音のメモ' }, new Date('2026-09-15T10:00:00'))
+    submitReview(e.id, 3) // review_logs に 1 行作る
+    const attachment = await addAttachment(e.id, pngFile())
+    const absPath = join(dataDir(), attachment.rel_path)
+    expect(await Bun.file(absPath).exists()).toBe(true)
+
+    await deleteEntry(e.id)
+
+    const db = getDb()
+    expect(db.query('SELECT 1 FROM entries WHERE id = ?').get(e.id)).toBeNull()
+    expect(db.query('SELECT 1 FROM schedule_state WHERE entry_id = ?').get(e.id)).toBeNull()
+    expect(db.query('SELECT 1 FROM review_logs WHERE entry_id = ?').get(e.id)).toBeNull()
+    expect(db.query('SELECT 1 FROM attachments WHERE entry_id = ?').get(e.id)).toBeNull()
+    expect(await Bun.file(absPath).exists()).toBe(false)
+  })
+
+  test('存在しない id は NotFoundError', async () => {
+    await expect(deleteEntry('存在しない-id')).rejects.toThrow(NotFoundError)
+  })
+
+  test('削除後は全文検索に出ない', async () => {
+    const e = createEntry({ day_date: '2026-09-15', body_md: '消える予定のテスト録音' })
+    expect(search('テスト録音')).toHaveLength(1)
+    await deleteEntry(e.id)
+    expect(search('テスト録音')).toHaveLength(0)
   })
 })

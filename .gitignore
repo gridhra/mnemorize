@@ -1,6 +1,7 @@
 node_modules/
 web/dist/
 data/
+.verify-data/
 .DS_Store
 spikes/whisper/samples/*.wav
 spikes/recorder/out/

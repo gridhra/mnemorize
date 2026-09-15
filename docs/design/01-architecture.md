@@ -186,6 +186,7 @@ REVIEW_LOGの列は検証（`05-spike-fsrs.md`）で確定した：再構築に�
 | `PATCH /api/entries/:id` | 更新 `{title?, body_md?, review_enabled?, reset_schedule?: boolean}`。更新前の全文をENTRY_REVISIONに積む |
 | `GET /api/entries/:id/revisions` | 履歴一覧 |
 | `POST /api/entries/:id/retire` / `unretire` | 卒業/取り消し |
+| `DELETE /api/entries/:id` | 記録そのものを削除（復習履歴・予定・添付ファイルも一緒に消える） |
 | `POST /api/entries/:id/attachments` | 画像追加（multipart） |
 | `DELETE /api/attachments/:id` | 添付削除 |
 | `GET /files/*` | 添付・音声の配信（データディレクトリ配下のみ） |

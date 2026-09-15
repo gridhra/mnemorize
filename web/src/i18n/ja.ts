@@ -57,6 +57,8 @@ export const ja = {
     futureNotice: 'この日はまだ来ていません。復習の予定だけを表示しています。',
     futureSection: 'この日に期限が来る復習',
     futureEmpty: 'この日に期限が来る復習はありません',
+    /** 検索結果などから開いた記録が、この日の一覧に無いとき（削除済み）。 */
+    entryMissing: 'この記録は削除されています。',
   },
   today: {
     reviewSection: '今日の復習',
@@ -104,6 +106,11 @@ export const ja = {
     retireHint: '記録は残り、復習の予定だけ止まります。',
     unretire: '復習を再開する',
     retireConfirm: RETIRE_CONFIRM,
+    /** 記録そのものの削除（「もう復習しない」＝予定を止めるだけ、とは別の操作）。 */
+    delete: 'この記録を削除する',
+    deleteHint: '「もう復習しない」と違い、記録そのものが消えます。',
+    deleteConfirm:
+      'この記録を削除します。本文・画像・録音・復習の記録もすべて消え、元に戻せません。よろしいですか。',
     resetSchedule: '内容を作り直したので復習を最初からやり直す',
     resetScheduleHint: 'これまでの復習の予定が翌日からやり直しになります。',
     resetScheduleAction: '復習をもう一度最初から',
@@ -231,6 +238,8 @@ export const ja = {
     // 音声の文字起こし：準備状態
     prepLabel: '文字起こしの準備',
     prepReady: 'できています',
+    prepReadyFallback: (path: string) =>
+      `できています（設定のパスは見つからず、${path}を使います）`,
     prepMissingCli: '音声認識のプログラム（whisper-cli）が見つかりません',
     prepModelNotConfigured: 'モデルファイルが未設定です',
     prepModelMissing: 'モデルファイルが見つかりません',
@@ -245,9 +254,9 @@ export const ja = {
     whisperModelPathLabel: 'モデルファイルの場所',
     whisperModelPathHelp: '音声認識に使うモデルファイル（拡張子.bin）の場所です。',
     whisperModelPathNote: {
-      purpose: '文字起こしは、この設定を頼りにモデルファイルを探します。指定が無いと標準の場所しか探しません。',
+      purpose: '文字起こしは、まずこの設定に入っているパスのモデルファイルを使います。',
       effect:
-        'パスを設定すると、そこにあるモデルファイルを使って文字起こしをします。空にすると、標準の場所（ホームフォルダの.cache/whisper-cpp）だけを探します。',
+        '既定値はこのマシンの~/.cache/whisper-cpp/ggml-large-v3-turbo.binです。この設定のパスにファイルが無いときは、同じフォルダにある他のモデル（ggml-large-v3-turbo-q5_0.binなど）を保険として探します。別の場所に置いたモデルを使うときは、ここでパスを書き換えます。',
       example: '/Users/name/models/ggml-large-v3-turbo.bin',
     },
     glossaryLabel: '覚えさせたい言葉',
@@ -308,6 +317,7 @@ export const ja = {
       `書き出しました：${path}（${files}ファイル、${bytes.toLocaleString('ja-JP')}バイト）`,
     openInFinder: 'Finderで開く',
     openInFinderFailed: 'Finderで開けませんでした',
+    snapshotLabel: '控え（データベースの複製）',
     createSnapshot: '控えを作る',
     createSnapshotHelp: 'データベースを丸ごと写した控え（複製）を1つ作ります。',
     snapshotCopyDirLabel: '控えのコピー先（任意）',

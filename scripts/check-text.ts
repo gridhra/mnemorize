@@ -8,7 +8,7 @@
  *
  * 判定そのものは scripts/lib/text-rules.ts の inspect() にある。本ファイルは
  * 検査対象から「読者が目にする素のテキスト」を取り出して inspect() に渡す入口
- * にすぎない。2 種類の入口がある。
+ * にすぎない。3 種類の入口がある。
  *
  *  (a) TypeScript の文字列リテラル（web/src/i18n/ja.ts）
  *      TypeScript の AST を歩いて文字列リテラルだけを見る——コメントや識別子は
@@ -17,6 +17,10 @@
  *  (b) Markdown の本文（docs/**\/*.md と CLAUDE.md）
  *      コードブロック（```）、行内コード（`…`）、URL、frontmatter、表の罫線
  *      （`|---|---|` の行）を除いた地の文を、行単位・表のセル単位で検査する。
+ *  (c) 画面の JSX（web/src/**\/*.tsx）
+ *      テキストノードと属性値に日本語が直書きされていないかだけを見る（正書法
+ *      ではなく置き場所の規則。文言は ja.ts に置く）。コメントと `ja.xxx` 経由の
+ *      文字列は対象外。判定は scripts/lib/jsx-text.ts にある。
  *
  * 隣接プロジェクトの scripts/check-text.ts を移植し、mnemorize 用に検査対象を
  * 差し替えた（元は src/ 配下の TypeScript 全体、こちらは i18n の言葉と docs）。
@@ -33,6 +37,7 @@ import { extname, join, relative, resolve } from "node:path";
 import ts from "typescript";
 import { ALLOW, JP, checkBrackets, inspect, type Finding } from "./lib/text-rules";
 import { BLOCK_MARKER_RE, TABLE_RULE_RE, stripMarkupNoise } from "./lib/markdown-text";
+import { findHardcodedJsxText } from "./lib/jsx-text";
 
 const ROOT = process.cwd();
 
@@ -41,10 +46,12 @@ type Violation = Finding & { file: string; line: number };
 const violations: Violation[] = [];
 let literalsScanned = 0;
 let linesScanned = 0;
+let tsxFilesScanned = 0;
 
 // ─── 検査対象の決定 ───────────────────────────────────────────────────────────
 
 const DEFAULT_TS_TARGETS = ["web/src/i18n/ja.ts"];
+const DEFAULT_TSX_TARGETS = ["web/src"];
 
 function collectMarkdownFiles(dir: string, out: string[]): void {
   const st = statSync(dir, { throwIfNoEntry: false });
@@ -66,13 +73,16 @@ function defaultMarkdownTargets(): string[] {
 
 const argv = process.argv.slice(2);
 let tsTargets: string[];
+let tsxTargets: string[];
 let mdTargets: string[];
 if (argv.length > 0) {
   const resolved = argv.map((p) => resolve(ROOT, p));
-  tsTargets = resolved.filter((p) => p.endsWith(".ts") || p.endsWith(".tsx"));
+  tsTargets = resolved.filter((p) => p.endsWith(".ts"));
+  tsxTargets = resolved.filter((p) => p.endsWith(".tsx"));
   mdTargets = resolved.filter((p) => p.endsWith(".md"));
 } else {
   tsTargets = DEFAULT_TS_TARGETS.map((p) => resolve(ROOT, p));
+  tsxTargets = DEFAULT_TSX_TARGETS.map((p) => resolve(ROOT, p));
   mdTargets = defaultMarkdownTargets();
 }
 
@@ -275,6 +285,26 @@ function checkMarkdownFile(file: string): void {
 
 for (const file of mdTargets) checkMarkdownFile(file);
 
+// ─── (c) 画面（.tsx）に直書きされた日本語 ────────────────────────────────────
+//
+// こちらは正書法ではなく置き場所の規則（「UI に出す文字列は ja.ts 以外に書かない」）。
+// JSX のテキストノードと属性値に日本語のリテラルがあれば違反にする。判定は
+// scripts/lib/jsx-text.ts の findHardcodedJsxText() にある。
+
+function checkTsxFile(file: string): void {
+  tsxFilesScanned++;
+  const source = readFileSync(file, "utf8");
+  for (const f of findHardcodedJsxText(source, file)) {
+    violations.push({ rule: f.rule, excerpt: f.excerpt, file: relative(ROOT, file), line: f.line });
+  }
+}
+
+for (const target of tsxTargets) {
+  for (const file of tsSourceFiles(target)) {
+    if (file.endsWith(".tsx")) checkTsxFile(file);
+  }
+}
+
 // ─── 報告 ─────────────────────────────────────────────────────────────────────
 
 for (const v of violations) {
@@ -290,5 +320,5 @@ if (violations.length > 0) {
 }
 
 console.log(
-  `違反なし（TS リテラル ${literalsScanned} 件・Markdown ${linesScanned} 行を検査、ALLOW ${ALLOW.size} 件）`,
+  `違反なし（TS リテラル ${literalsScanned} 件・TSX ${tsxFilesScanned} ファイル・Markdown ${linesScanned} 行を検査、ALLOW ${ALLOW.size} 件）`,
 );

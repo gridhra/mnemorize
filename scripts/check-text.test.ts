@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { fixMarkdownSource } from "./fix-text-spacing";
 import { inspect } from "./lib/text-rules";
+import { findHardcodedJsxText } from "./lib/jsx-text";
 
 /** ある文字列が指定した規則名を含む Finding を出すかどうか。 */
 function violatesRule(text: string, ruleSubstring: string, standalone = true): boolean {
@@ -82,6 +83,37 @@ describe("規則7: 日英間の半角スペース", () => {
 describe("inspect(): 日本語を含まない文字列は制御文字以外の規則を適用しない", () => {
   test("英語だけの文字列は括弧やスペースの規則に掛からない", () => {
     expect(inspect("This is a (test) string.", true)).toEqual([]);
+  });
+});
+
+describe("findHardcodedJsxText(): 画面（.tsx）への UI 文言の直書き", () => {
+  test("違反する例: テキストノードと属性値に日本語がある", () => {
+    const src = [
+      "export function C() {",
+      "  return (",
+      '    <div title="閉じる">',
+      "      読み込み中…",
+      "    </div>",
+      "  );",
+      "}",
+    ].join("\n");
+    const found = findHardcodedJsxText(src);
+    expect(found.map((f) => f.excerpt)).toEqual(["閉じる", "読み込み中…"]);
+  });
+
+  test("違反しない例: 文言は ja.ts 経由で、日本語はコメントと関数の中だけ", () => {
+    const src = [
+      "// 日本語のコメントは対象外",
+      "export function C() {",
+      "  return (",
+      "    <div title={ja.entry.close}>",
+      "      {/* ここも対象外 */}",
+      "      <button onClick={() => confirm('本当に消しますか')}>{ja.entry.save}</button>",
+      "    </div>",
+      "  );",
+      "}",
+    ].join("\n");
+    expect(findHardcodedJsxText(src)).toEqual([]);
   });
 });
 

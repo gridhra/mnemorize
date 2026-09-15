@@ -78,17 +78,20 @@ export function Calendar({ ym, today }: Props) {
 
   return (
     <div class="page">
+      {/* 移動の帯。日の画面（Day）と同じ構造・同じクラスで、
+          「前へ・見出し・次へ・別の画面へ」の4つをこの順に置く。
+          4つ目だけは無効化できる必要があるのでボタン（日の画面はリンク）。 */}
       <div class="daybar">
-        <a class="button" href={formatRoute({ name: 'calendar', ym: addMonths(month, -1) })}>
+        <a class="button daybar-prev" href={formatRoute({ name: 'calendar', ym: addMonths(month, -1) })}>
           {ja.calendar.prevMonth}
         </a>
         <h1 class="daybar-title">{ja.calendar.monthLabel(year ?? 0, monthNo ?? 0)}</h1>
-        <a class="button" href={formatRoute({ name: 'calendar', ym: addMonths(month, 1) })}>
+        <a class="button daybar-next" href={formatRoute({ name: 'calendar', ym: addMonths(month, 1) })}>
           {ja.calendar.nextMonth}
         </a>
         <button
           type="button"
-          class="button"
+          class="button daybar-jump"
           disabled={isThisMonth}
           onClick={() => navigate({ name: 'calendar', ym: monthOf(today) })}
         >

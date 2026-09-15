@@ -10,7 +10,16 @@ import { ReviewCard } from './ReviewCard.tsx'
 /** 「次の復習」の予告（次に期限が来る学習日と、その日の件数）。無ければ null。 */
 type NextDue = { date: string; count: number }
 
-export function ReviewSection() {
+type Props = {
+  /**
+   * 復習カードを 1 枚表示しているかどうかを親（今日画面）へ知らせる。
+   * 表示中は「思い出せたら開く」が塗りつぶしの主操作になるので、今日画面は
+   * 「録音して記録する」を枠線に落とす（塗りつぶしは画面に 1 つ。設計 05 §6）。
+   */
+  onActiveChange?: (active: boolean) => void
+}
+
+export function ReviewSection({ onActiveChange }: Props) {
   const [queue, setQueue] = useState<ReviewQueue | null>(null)
   const [index, setIndex] = useState(0)
   const [error, setError] = useState<string | null>(null)
@@ -104,6 +113,11 @@ export function ReviewSection() {
   const total = queue?.items.length ?? 0
   const current = queue?.items[index]
   const done = Math.min(index, total)
+  // 復習カードが出ているかを親へ知らせる（塗りつぶしの主操作を 1 つに保つため）。
+  const active = current !== undefined
+  useEffect(() => {
+    onActiveChange?.(active)
+  }, [active, onActiveChange])
 
   return (
     <section class="section">

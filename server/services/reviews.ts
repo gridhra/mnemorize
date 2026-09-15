@@ -15,6 +15,7 @@ import {
   type ReviewRating,
   type ScheduleState,
 } from './scheduler.ts'
+import { toState } from './schedule-state.ts'
 
 export type ReviewLogRow = {
   id: string
@@ -73,32 +74,6 @@ export type TodayQueue = {
   next_due_date: string | null
   /** その学習日に期限が来る件数（next_due_date が null なら 0）。 */
   next_due_count: number
-}
-
-/** DB の 1 行をスケジューラの状態に直す。 */
-function toState(row: {
-  due: string
-  state: string
-  stability: number | null
-  difficulty: number | null
-  elapsed_days: number | null
-  scheduled_days: number | null
-  reps: number
-  lapses: number
-  last_review: string | null
-}): ScheduleState {
-  return {
-    due: new Date(row.due),
-    // enable_short_term: false なので New / Review しか現れない（scheduler.ts の規約 6）。
-    state: row.state === 'New' ? 'New' : 'Review',
-    stability: row.stability,
-    difficulty: row.difficulty,
-    elapsed_days: row.elapsed_days ?? 0,
-    scheduled_days: row.scheduled_days ?? 0,
-    reps: row.reps,
-    lapses: row.lapses,
-    last_review: row.last_review ? new Date(row.last_review) : null,
-  }
 }
 
 function serializeState(s: ScheduleState): SerializedSchedule {

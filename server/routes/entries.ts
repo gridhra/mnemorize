@@ -3,6 +3,7 @@ import { Hono } from 'hono'
 import {
   ValidationError,
   createEntry,
+  deleteEntry,
   getEntry,
   listRevisions,
   retireEntry,
@@ -48,6 +49,11 @@ app.patch('/:id', async (c) => {
 })
 
 app.get('/:id/revisions', (c) => c.json({ revisions: listRevisions(c.req.param('id')) }))
+
+app.delete('/:id', async (c) => {
+  await deleteEntry(c.req.param('id'))
+  return c.json({ ok: true })
+})
 
 app.post('/:id/retire', (c) => c.json({ entry: retireEntry(c.req.param('id')) }))
 app.post('/:id/unretire', (c) => c.json({ entry: unretireEntry(c.req.param('id')) }))

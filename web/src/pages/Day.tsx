@@ -5,10 +5,12 @@ import { api, type Entry, type UpcomingDay } from '../api.ts'
 import { ja, formatJapaneseDate } from '../i18n/ja.ts'
 import { EntryCard } from '../components/EntryCard.tsx'
 import { EntryEditor } from '../components/EntryEditor.tsx'
+import { Recorder } from '../components/Recorder.tsx'
 import { TranscribingCard } from '../components/TranscribingCard.tsx'
 import { addDays, monthOf } from '../dates.ts'
 import { formatRoute } from '../router.ts'
 import { useReviewQueueRefresh } from '../queue-context.ts'
+import { useTranscribingJobs } from '../hooks/useTranscribingJobs.ts'
 
 type Props = {
   /** 表示する学習日（YYYY-MM-DD）。 */
@@ -28,7 +30,6 @@ export function Day({ date, today, entryId }: Props) {
   const isFuture = date > today
   const isToday = date === today
   const [entries, setEntries] = useState<Entry[] | null>(null)
-  const [jobIds, setJobIds] = useState<string[]>([])
   const [upcoming, setUpcoming] = useState<UpcomingDay | null | undefined>(undefined)
   const [error, setError] = useState<string | null>(null)
   const refreshDueCount = useReviewQueueRefresh()
@@ -43,11 +44,13 @@ export function Day({ date, today, entryId }: Props) {
       .catch((e) => setError(e instanceof Error ? e.message : ja.error.generic))
   }
 
+  // 進行中の文字起こしジョブ（今日の画面と同じ扱い）。まだ来ていない日では読まない。
+  const { jobIds, addJob, removeJob, onDone } = useTranscribingJobs(isFuture ? null : date, reload)
+
   useEffect(() => {
     let alive = true
     setError(null)
     setEntries(null)
-    setJobIds([])
     setUpcoming(undefined)
     scrolledTo.current = null
 
@@ -65,13 +68,6 @@ export function Day({ date, today, entryId }: Props) {
       .day(date)
       .then((res) => alive && setEntries(newestFirst(res.entries)))
       .catch((e) => alive && setError(e instanceof Error ? e.message : ja.error.generic))
-    // その日の、まだ決着していない文字起こしジョブ（今日の画面と同じ扱い）。
-    api
-      .transcriptions({ status: ['queued', 'running', 'failed'], day_date: date })
-      .then((res) => alive && setJobIds(res.jobs.map((j) => j.id)))
-      .catch(() => {
-        // ジョブ一覧が読めなくても、その日の記録の表示は続ける。
-      })
     return () => {
       alive = false
     }
@@ -88,20 +84,29 @@ export function Day({ date, today, entryId }: Props) {
 
   return (
     <div class="page">
+      {/* 移動の帯。月の画面（Calendar）と同じ構造・同じクラスで、
+          「前へ・見出し・次へ・別の画面へ」の4つをこの順に置く。 */}
       <div class="daybar">
-        <a class="button" href={formatRoute({ name: 'day', date: addDays(date, -1) })}>
+        <a class="button daybar-prev" href={formatRoute({ name: 'day', date: addDays(date, -1) })}>
           {ja.day.prevDay}
         </a>
         <h1 class="daybar-title">{formatJapaneseDate(date)}</h1>
-        <a class="button" href={formatRoute({ name: 'day', date: addDays(date, 1) })}>
+        <a class="button daybar-next" href={formatRoute({ name: 'day', date: addDays(date, 1) })}>
           {ja.day.nextDay}
         </a>
-        <a class="button" href={formatRoute({ name: 'calendar', ym: monthOf(date) })}>
+        <a class="button daybar-jump" href={formatRoute({ name: 'calendar', ym: monthOf(date) })}>
           {ja.day.toCalendar}
         </a>
       </div>
 
+      {/* 案内文は帯の直下に統一する（今日・未来のどちらも同じ位置。過去は何も出さない）。 */}
       {isToday && <p class="muted status-line">{ja.day.todayNotice}</p>}
+      {isFuture && <p class="muted status-line">{ja.day.futureNotice}</p>}
+      {/* 検索結果などから `?entry=<id>` で来たのに、その記録がこの日の一覧に無い
+          （削除されている）とき。案内文と同じ位置に出す。 */}
+      {entryId && entries !== null && !entries.some((e) => e.id === entryId) && (
+        <p class="muted status-line">{ja.day.entryMissing}</p>
+      )}
 
       {error && (
         <p class="error">
@@ -126,8 +131,6 @@ export function Day({ date, today, entryId }: Props) {
               ))}
             </ul>
           )}
-          {/* 原則 B：新規作成欄と同じ位置に、なぜ書けないかの一文を置く。 */}
-          <p class="muted status-line">{ja.day.futureNotice}</p>
         </section>
       ) : (
         <section class="section">
@@ -141,11 +144,8 @@ export function Day({ date, today, entryId }: Props) {
                 <TranscribingCard
                   key={jobId}
                   jobId={jobId}
-                  onDone={() => {
-                    setJobIds((cur) => cur.filter((id) => id !== jobId))
-                    reload()
-                  }}
-                  onDismiss={(id) => setJobIds((cur) => cur.filter((x) => x !== id))}
+                  onDone={() => onDone(jobId)}
+                  onDismiss={removeJob}
                 />
               ))}
             </div>
@@ -169,6 +169,10 @@ export function Day({ date, today, entryId }: Props) {
                     onChanged={(updated) =>
                       setEntries((cur) => (cur ?? []).map((x) => (x.id === updated.id ? updated : x)))
                     }
+                    onDeleted={(id) => {
+                      setEntries((cur) => (cur ?? []).filter((x) => x.id !== id))
+                      refreshDueCount()
+                    }}
                   />
                 </div>
               ))}
@@ -181,6 +185,16 @@ export function Day({ date, today, entryId }: Props) {
               key={date}
               initial={{ title: '', body_md: '', review_enabled: true }}
               submitLabel={ja.entry.create}
+              showCaptureSlots
+              recorderSlot={
+                // この画面には復習カードが出ないので、録音は常に主操作＝塗りつぶし（設計05§6）。
+                // 文字起こしのジョブは、いま見ている日（date）の記録として作る。
+                <Recorder
+                  dayDate={date}
+                  primary
+                  onJobCreated={addJob}
+                />
+              }
               onSubmit={async (v) => {
                 const res = await api.createEntry({
                   day_date: date,

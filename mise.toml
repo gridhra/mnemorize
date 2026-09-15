@@ -1,0 +1,74 @@
+min_version = "2024.9.0"
+
+[tools]
+bun = "1.2"
+
+# データ置き場（data/）はコード側の既定に任せる。ここでは何も上書きしない。
+[env]
+
+[tasks.install]
+description = "依存の導入"
+run = "bun install"
+
+[tasks.dev]
+description = "APIサーバー（8790）とVite（5173）を同時起動する"
+run = "bun run scripts/dev.ts"
+
+[tasks."dev:stop"]
+description = "8790と5173で待ち受けているプロセスを止める（無ければ何もしない）"
+run = "lsof -ti :8790 -ti :5173 | xargs kill"
+
+[tasks.start]
+description = "ビルド済みweb/dist/を8790だけで配信する"
+run = "MNEMORIZE_SERVE_STATIC=1 bun run server/index.ts"
+
+[tasks.build]
+description = "単一ページアプリをweb/dist/にビルドする"
+run = "bun run build"
+
+[tasks.test]
+description = "単体テスト（*.test.ts）を実行する"
+run = "bun test"
+
+[tasks.typecheck]
+description = "型検査のみ実行する"
+run = "bun run typecheck"
+
+[tasks."check:text"]
+description = "画面文言の正書法を検査する"
+run = "bun run check:text"
+
+[tasks."fix:text"]
+description = "正書法の乱れを一括修正する"
+run = "bun run scripts/fix-text-spacing.ts"
+
+[tasks."check:paths"]
+description = "追跡ファイルにマシン固有の絶対パス（/Users/…、/private/tmp/…、/Volumes/…）が無いか検査する（公開リポジトリへの露出を防ぐ）"
+run = '''
+if git grep -n -I -E "/Users/[^n]|/private/tmp|/Volumes/" -- . ':!*.lock'; then
+  echo "マシン固有の絶対パスが追跡ファイルに含まれています。~ や相対パスに直してください。" >&2
+  exit 1
+fi
+echo "check:paths: 違反なし"
+'''
+
+[tasks.check]
+description = "typecheck・test・check:text・buildを順に実行する"
+depends = ["typecheck", "test", "check:text", "check:paths", "build"]
+
+[tasks.verify]
+description = "検証用サーバーを一時データ置き場（.verify-data/）・別ポート（8798）・静的配信で起動する。第1引数でMNEMORIZE_FAKE_NOWを指定できる（例: mise run verify -- 2026-09-16T10:00:00）"
+depends = ["build"]
+run = '''
+#!/usr/bin/env bash
+set -euo pipefail
+MNEMORIZE_DATA_DIR="$(pwd)/.verify-data" \
+MNEMORIZE_PORT=8798 \
+MNEMORIZE_SERVE_STATIC=1 \
+MNEMORIZE_FAKE_NOW="${1:-}" \
+bun run server/index.ts
+'''
+
+[tasks."verify:reset"]
+description = "検証用データ置き場（.verify-data/）を消す"
+run = "rm -rf .verify-data"

@@ -2,6 +2,7 @@
 import { Hono } from 'hono'
 import { dataDir, dbPath } from '../db/connection.ts'
 import { getSettings } from '../services/settings.ts'
+import { resolveModelStatus } from '../adapters/asr-whisper-cli.ts'
 import { localDate, now as clockNow, toLocalIso } from '../adapters/clock.ts'
 
 const app = new Hono()
@@ -22,6 +23,7 @@ app.get('/', async (c) => {
   const settings = getSettings()
   const modelPath = settings.whisper_model_path
   const cli = await whichWhisperCli()
+  const modelStatus = await resolveModelStatus(modelPath)
   const now = clockNow() // MNEMORIZE_FAKE_NOW での検証時に「今日」を復習側と揃える
   return c.json({
     ok: true,
@@ -31,7 +33,10 @@ app.get('/', async (c) => {
     whisper_cli_found: cli !== null,
     whisper_model_path: modelPath,
     whisper_model_configured: modelPath.length > 0,
-    whisper_model_exists: modelPath.length > 0 ? await Bun.file(modelPath).exists() : false,
+    // 設定のパスが無くても、保険の候補が見つかれば文字起こしは動く。そちらも「ある」として扱う。
+    whisper_model_exists: modelStatus.effectivePath !== null,
+    whisper_model_effective_path: modelStatus.effectivePath,
+    whisper_model_used_fallback: modelStatus.usedFallback,
     boundary_hour: settings.boundary_hour,
     today: localDate(now, settings.boundary_hour),
     now: toLocalIso(now),

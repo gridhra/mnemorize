@@ -9,6 +9,7 @@ import { Recorder } from '../components/Recorder.tsx'
 import { ReviewSection } from '../components/ReviewSection.tsx'
 import { TranscribingCard } from '../components/TranscribingCard.tsx'
 import { useReviewQueueRefresh } from '../queue-context.ts'
+import { useTranscribingJobs } from '../hooks/useTranscribingJobs.ts'
 
 type Props = { today: string }
 
@@ -20,8 +21,9 @@ function newestFirst(entries: Entry[]): Entry[] {
 export function Today({ today }: Props) {
   const [entries, setEntries] = useState<Entry[] | null>(null)
   const [error, setError] = useState<string | null>(null)
-  // 進行中の文字起こしジョブ。新しいものを先頭に出す（要件 C2）。
-  const [jobIds, setJobIds] = useState<string[]>([])
+  // 復習カードを表示中か。表示中は「思い出せたら開く」が塗りつぶしの主操作なので、
+  // 「録音して記録する」は枠線に落とす（塗りつぶしは画面に 1 つ。設計 05 §6）。
+  const [reviewActive, setReviewActive] = useState(false)
   const refreshDueCount = useReviewQueueRefresh()
 
   /** その日の一覧を取り直す。 */
@@ -32,6 +34,9 @@ export function Today({ today }: Props) {
       .catch((e) => setError(e instanceof Error ? e.message : ja.error.generic))
   }
 
+  // 進行中の文字起こしジョブ。新しいものを先頭に出す（要件 C2）。
+  const { jobIds, addJob, removeJob, onDone } = useTranscribingJobs(today, reload)
+
   useEffect(() => {
     let alive = true
     setEntries(null)
@@ -41,25 +46,6 @@ export function Today({ today }: Props) {
         if (alive) setEntries(newestFirst(res.entries))
       })
       .catch((e) => alive && setError(e instanceof Error ? e.message : ja.error.generic))
-    return () => {
-      alive = false
-    }
-  }, [today])
-
-  // この日の、まだ決着していない文字起こしジョブをサーバーから読む。
-  // これが無いと、ブラウザ自身が始めた録音のジョブしかカードに出ない
-  // （再読み込みしたあとや、別の経路で作られたジョブの失敗が画面から見えなくなる）。
-  useEffect(() => {
-    let alive = true
-    setJobIds([])
-    api
-      .transcriptions({ status: ['queued', 'running', 'failed'], day_date: today })
-      .then((res) => {
-        if (alive) setJobIds(res.jobs.map((j) => j.id))
-      })
-      .catch(() => {
-        // ジョブ一覧が読めなくても、その日の記録の表示は続ける。
-      })
     return () => {
       alive = false
     }
@@ -76,7 +62,7 @@ export function Today({ today }: Props) {
         </p>
       )}
 
-      <ReviewSection />
+      <ReviewSection onActiveChange={setReviewActive} />
 
       <section class="section">
         <div class="section-head">
@@ -92,8 +78,8 @@ export function Today({ today }: Props) {
             recorderSlot={
               <Recorder
                 dayDate={today}
-                primary
-                onJobCreated={(jobId) => setJobIds((cur) => (cur.includes(jobId) ? cur : [jobId, ...cur]))}
+                primary={!reviewActive}
+                onJobCreated={addJob}
               />
             }
             onSubmit={async (v) => {
@@ -117,11 +103,8 @@ export function Today({ today }: Props) {
               <TranscribingCard
                 key={jobId}
                 jobId={jobId}
-                onDone={() => {
-                  setJobIds((cur) => cur.filter((id) => id !== jobId))
-                  reload()
-                }}
-                onDismiss={(id) => setJobIds((cur) => cur.filter((x) => x !== id))}
+                onDone={() => onDone(jobId)}
+                onDismiss={removeJob}
               />
             ))}
           </div>
@@ -141,6 +124,10 @@ export function Today({ today }: Props) {
                 onChanged={(updated) =>
                   setEntries((cur) => (cur ?? []).map((x) => (x.id === updated.id ? updated : x)))
                 }
+                onDeleted={(id) => {
+                  setEntries((cur) => (cur ?? []).filter((x) => x.id !== id))
+                  refreshDueCount()
+                }}
               />
             ))}
           </div>

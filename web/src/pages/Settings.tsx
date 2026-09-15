@@ -1,6 +1,6 @@
 // 設定画面：音声の文字起こし・復習・データの 3 節（設計 05 §3.6）。
 import { useEffect, useRef, useState } from 'preact/hooks'
-import { api, type Health } from '../api.ts'
+import { api, ApiError, type Health } from '../api.ts'
 import { ja } from '../i18n/ja.ts'
 import { useIme } from '../hooks/ime.ts'
 
@@ -33,22 +33,15 @@ const EMPTY_FORM: FormState = {
   snapshot_copy_dir: '',
 }
 
-/**
- * サーバーの検証エラー文から、どの欄の話かを判定するための対応表。
- * サーバー（server/services/settings.ts）はメッセージの先頭にラベルと同じ文字列を置く
- * 決まりにしているので、そのラベルを含むかどうかで振り分ける。一致しなければ
- * 画面下部の共通エラーとして出す。
- */
-const FIELD_MATCH: [SettingKey, string][] = [
-  ['whisper_model_path', ja.settings.whisperModelPathLabel],
-  ['glossary', ja.settings.glossaryLabel],
-  ['hallucination_phrases', ja.settings.hallucinationLabel],
-  ['daily_review_limit', ja.settings.dailyReviewLimitLabel],
-  ['auto_retire', ja.settings.autoRetireLabel],
-  ['boundary_hour', ja.settings.boundaryHourLabel],
-  // 表示ラベルは「控えのコピー先（任意）」。サーバーのメッセージには「（任意）」を含めないので、
-  // 判定用にはこちらの短い形を使う。
-  ['snapshot_copy_dir', '控えのコピー先'],
+/** 設定の各欄の鍵（サーバーが返す `field` と同じ文字列）。 */
+const SETTING_KEYS: SettingKey[] = [
+  'whisper_model_path',
+  'glossary',
+  'hallucination_phrases',
+  'daily_review_limit',
+  'auto_retire',
+  'boundary_hour',
+  'snapshot_copy_dir',
 ]
 
 type NoteContent = { purpose: string; effect: string; example: string }
@@ -126,6 +119,9 @@ export function Settings() {
     if (!h.whisper_cli_found) return ja.settings.prepMissingCli
     if (!h.whisper_model_configured) return ja.settings.prepModelNotConfigured
     if (!h.whisper_model_exists) return ja.settings.prepModelMissing
+    if (h.whisper_model_used_fallback && h.whisper_model_effective_path) {
+      return ja.settings.prepReadyFallback(h.whisper_model_effective_path)
+    }
     return ja.settings.prepReady
   }
 
@@ -164,12 +160,12 @@ export function Settings() {
       const h = await api.health()
       setHealth(h)
     } catch (e) {
-      const message = e instanceof Error ? e.message : ja.error.generic
-      const matched = FIELD_MATCH.find(([, label]) => message.includes(label))
-      if (matched) {
-        setFieldErrors({ [matched[0]]: message })
+      // field が既知の欄の鍵ならその欄の下に、無ければ（未知の field・field 無し）
+      // 画面下部の共通エラーに出す。ラベル文言には依存しない。
+      if (e instanceof ApiError && e.field && (SETTING_KEYS as string[]).includes(e.field)) {
+        setFieldErrors({ [e.field as SettingKey]: e.message })
       } else {
-        setError(message)
+        setError(e instanceof Error ? e.message : ja.error.generic)
       }
     } finally {
       setSaving(false)
@@ -234,130 +230,151 @@ export function Settings() {
     <div class="page">
       <h1>{ja.settings.title}</h1>
 
-      <section class="settings-section">
-        <h2 class="section-title">{ja.settings.sectionTranscription}</h2>
+      {/*
+        文字起こしと復習の設定は「保存」1 つで一緒に保存する。
+        そのため両節を 1 つの form に入れ、末尾に保存の操作行を置く。
+        データ節（書き出し・控え）は保存と無関係なので form の外に出す。
+      */}
+      <form
+        class="settings-form"
+        onSubmit={(e) => {
+          e.preventDefault()
+          void save()
+        }}
+      >
+        <section class="card settings-section">
+          <h2 class="section-title">{ja.settings.sectionTranscription}</h2>
 
-        {health && (
-          <p class="settings-status">
-            {ja.settings.prepLabel}：{prepStatusText(health)}
-          </p>
-        )}
-        {health && !prepReady(health) && (
-          <div class="settings-hint">
-            <p>{ja.settings.prepNotReadyNote}</p>
-            <ul>
-              {ja.settings.setupSteps.map((step) => (
-                <li key={step}>{step}</li>
-              ))}
-            </ul>
-          </div>
-        )}
-
-        <div class="field">
-          <span class="field-label">{ja.settings.whisperModelPathLabel}</span>
-          <p class="field-help">{ja.settings.whisperModelPathHelp}</p>
-          <FieldNote note={ja.settings.whisperModelPathNote} />
-          <input
-            class="input"
-            type="text"
-            value={form.whisper_model_path}
-            onInput={(e) => set('whisper_model_path', (e.target as HTMLInputElement).value)}
-            {...ime.handlers}
-          />
-          {fieldErrors.whisper_model_path && <p class="field-error">{fieldErrors.whisper_model_path}</p>}
-        </div>
-
-        <div class="field">
-          <span class="field-label">{ja.settings.glossaryLabel}</span>
-          <p class="field-help">{ja.settings.glossaryHelp}</p>
-          <FieldNote note={ja.settings.glossaryNote} />
-          <textarea
-            class="textarea"
-            rows={4}
-            value={form.glossary}
-            onInput={(e) => set('glossary', (e.target as HTMLTextAreaElement).value)}
-            {...ime.handlers}
-          />
-          {fieldErrors.glossary && <p class="field-error">{fieldErrors.glossary}</p>}
-        </div>
-
-        <div class="field">
-          <span class="field-label">{ja.settings.hallucinationLabel}</span>
-          <p class="field-help">{ja.settings.hallucinationHelp}</p>
-          <FieldNote note={ja.settings.hallucinationNote} />
-          <textarea
-            class="textarea"
-            rows={4}
-            value={form.hallucination_phrases}
-            onInput={(e) => set('hallucination_phrases', (e.target as HTMLTextAreaElement).value)}
-            {...ime.handlers}
-          />
-          {fieldErrors.hallucination_phrases && (
-            <p class="field-error">{fieldErrors.hallucination_phrases}</p>
+          {health && (
+            <div class={`status-box ${prepReady(health) ? 'ok' : 'warn'}`}>
+              <p class="status-box-title">
+                {ja.settings.prepLabel}：{prepStatusText(health)}
+              </p>
+              {!prepReady(health) && (
+                <>
+                  <p>{ja.settings.prepNotReadyNote}</p>
+                  <ul>
+                    {ja.settings.setupSteps.map((step) => (
+                      <li key={step}>{step}</li>
+                    ))}
+                  </ul>
+                </>
+              )}
+            </div>
           )}
-        </div>
-      </section>
 
-      <section class="settings-section">
-        <h2 class="section-title">{ja.settings.sectionReview}</h2>
+          <label class="field">
+            <span class="field-label">{ja.settings.whisperModelPathLabel}</span>
+            <input
+              class="input"
+              type="text"
+              value={form.whisper_model_path}
+              onInput={(e) => set('whisper_model_path', (e.target as HTMLInputElement).value)}
+              {...ime.handlers}
+            />
+            {fieldErrors.whisper_model_path && <p class="field-error">{fieldErrors.whisper_model_path}</p>}
+            <p class="field-help">{ja.settings.whisperModelPathHelp}</p>
+            <FieldNote note={ja.settings.whisperModelPathNote} />
+          </label>
 
-        <div class="field">
-          <span class="field-label">{ja.settings.dailyReviewLimitLabel}</span>
-          <p class="field-help">{ja.settings.dailyReviewLimitHelp}</p>
-          <FieldNote note={ja.settings.dailyReviewLimitNote} />
-          <input
-            class="input"
-            type="number"
-            value={form.daily_review_limit}
-            onInput={(e) => set('daily_review_limit', (e.target as HTMLInputElement).value)}
-          />
-          {fieldErrors.daily_review_limit && <p class="field-error">{fieldErrors.daily_review_limit}</p>}
-        </div>
+          <label class="field">
+            <span class="field-label">{ja.settings.glossaryLabel}</span>
+            <textarea
+              class="textarea"
+              rows={4}
+              value={form.glossary}
+              onInput={(e) => set('glossary', (e.target as HTMLTextAreaElement).value)}
+              {...ime.handlers}
+            />
+            {fieldErrors.glossary && <p class="field-error">{fieldErrors.glossary}</p>}
+            <p class="field-help">{ja.settings.glossaryHelp}</p>
+            <FieldNote note={ja.settings.glossaryNote} />
+          </label>
 
-        <label class="field field-checkbox">
-          <input
-            type="checkbox"
-            checked={form.auto_retire}
-            onChange={(e) => set('auto_retire', (e.target as HTMLInputElement).checked)}
-          />
-          <span class="field-label">{ja.settings.autoRetireLabel}</span>
-          <p class="field-help">{ja.settings.autoRetireHelp}</p>
-          <FieldNote note={ja.settings.autoRetireNote} />
-          {fieldErrors.auto_retire && <p class="field-error">{fieldErrors.auto_retire}</p>}
-        </label>
+          <label class="field">
+            <span class="field-label">{ja.settings.hallucinationLabel}</span>
+            <textarea
+              class="textarea"
+              rows={4}
+              value={form.hallucination_phrases}
+              onInput={(e) => set('hallucination_phrases', (e.target as HTMLTextAreaElement).value)}
+              {...ime.handlers}
+            />
+            {fieldErrors.hallucination_phrases && (
+              <p class="field-error">{fieldErrors.hallucination_phrases}</p>
+            )}
+            <p class="field-help">{ja.settings.hallucinationHelp}</p>
+            <FieldNote note={ja.settings.hallucinationNote} />
+          </label>
+        </section>
 
-        <div class="field">
-          <span class="field-label">{ja.settings.boundaryHourLabel}</span>
-          <p class="field-help">{ja.settings.boundaryHourHelp}</p>
-          <FieldNote note={ja.settings.boundaryHourNote} />
-          <input
-            class="input"
-            type="number"
-            value={form.boundary_hour}
-            onInput={(e) => set('boundary_hour', (e.target as HTMLInputElement).value)}
-          />
-          {fieldErrors.boundary_hour && <p class="field-error">{fieldErrors.boundary_hour}</p>}
-        </div>
-      </section>
+        <section class="card settings-section">
+          <h2 class="section-title">{ja.settings.sectionReview}</h2>
 
-      <div class="editor-actions">
-        <button type="button" class="button primary" disabled={saving} onClick={() => void save()}>
-          {saving ? ja.settings.saving : ja.settings.save}
-        </button>
-        {savedMessage && <span class="settings-status ok">{savedMessage}</span>}
-      </div>
-      {error && <p class="field-error">{ja.error.prefix}{error}</p>}
+          <label class="field">
+            <span class="field-label">{ja.settings.dailyReviewLimitLabel}</span>
+            <input
+              class="input input-narrow"
+              type="number"
+              value={form.daily_review_limit}
+              onInput={(e) => set('daily_review_limit', (e.target as HTMLInputElement).value)}
+            />
+            {fieldErrors.daily_review_limit && <p class="field-error">{fieldErrors.daily_review_limit}</p>}
+            <p class="field-help">{ja.settings.dailyReviewLimitHelp}</p>
+            <FieldNote note={ja.settings.dailyReviewLimitNote} />
+          </label>
 
-      <section class="settings-section">
+          {/*
+            チェックの項目だけは、外側を label にしない。label の中で「詳しく」を開くと
+            チェックが一緒に切り替わってしまうため、チェックとラベルの 1 行だけを label にする。
+          */}
+          <div class="field field-checkbox">
+            <label class="field-checkbox-line">
+              <input
+                type="checkbox"
+                checked={form.auto_retire}
+                onChange={(e) => set('auto_retire', (e.target as HTMLInputElement).checked)}
+              />
+              <span class="field-label">{ja.settings.autoRetireLabel}</span>
+            </label>
+            {fieldErrors.auto_retire && <p class="field-error">{fieldErrors.auto_retire}</p>}
+            <p class="field-help">{ja.settings.autoRetireHelp}</p>
+            <FieldNote note={ja.settings.autoRetireNote} />
+          </div>
+
+          <label class="field">
+            <span class="field-label">{ja.settings.boundaryHourLabel}</span>
+            <input
+              class="input input-narrow"
+              type="number"
+              value={form.boundary_hour}
+              onInput={(e) => set('boundary_hour', (e.target as HTMLInputElement).value)}
+            />
+            {fieldErrors.boundary_hour && <p class="field-error">{fieldErrors.boundary_hour}</p>}
+            <p class="field-help">{ja.settings.boundaryHourHelp}</p>
+            <FieldNote note={ja.settings.boundaryHourNote} />
+          </label>
+
+          <div class="form-actions">
+            {error && <p class="field-error">{ja.error.prefix}{error}</p>}
+            {savedMessage && <span class="settings-status ok">{savedMessage}</span>}
+            <button type="submit" class="button primary" disabled={saving}>
+              {saving ? ja.settings.saving : ja.settings.save}
+            </button>
+          </div>
+        </section>
+      </form>
+
+      <section class="card settings-section">
         <h2 class="section-title">{ja.settings.sectionData}</h2>
 
         <div class="field">
           <span class="field-label">{ja.settings.dataDirLabel}</span>
+          {health && <code class="path">{health.data_dir}</code>}
           <p class="field-help">{ja.settings.dataDirHelp}</p>
-          {health && <code>{health.data_dir}</code>}
         </div>
 
-        <div class="editor-actions">
+        <div class="action-row">
           <button
             type="button"
             class="button ghost"
@@ -374,9 +391,7 @@ export function Settings() {
           >
             {exportWorking === 'json' ? ja.settings.working : ja.settings.exportJson}
           </button>
-        </div>
-        <div class="settings-result-row">
-          <span class="settings-status">{exportResultText ?? ''}</span>
+          <span class="action-result">{exportResultText ?? ''}</span>
           <button
             type="button"
             class="button ghost"
@@ -389,10 +404,8 @@ export function Settings() {
         {exportError && <p class="field-error">{exportError}</p>}
         {exportOpenError && <p class="field-error">{exportOpenError}</p>}
 
-        <div class="field">
+        <label class="field">
           <span class="field-label">{ja.settings.snapshotCopyDirLabel}</span>
-          <p class="field-help">{ja.settings.snapshotCopyDirHelp}</p>
-          <FieldNote note={ja.settings.snapshotCopyDirNote} />
           <input
             class="input"
             type="text"
@@ -401,27 +414,27 @@ export function Settings() {
             {...ime.handlers}
           />
           {fieldErrors.snapshot_copy_dir && <p class="field-error">{fieldErrors.snapshot_copy_dir}</p>}
-        </div>
+          <p class="field-help">{ja.settings.snapshotCopyDirHelp}</p>
+          <FieldNote note={ja.settings.snapshotCopyDirNote} />
+        </label>
 
         <div class="field">
-          <span class="field-label">{ja.settings.createSnapshot}</span>
+          <span class="field-label">{ja.settings.snapshotLabel}</span>
+          <div class="action-row action-row-single">
+            <button type="button" class="button ghost" disabled={snapshotWorking} onClick={() => void runSnapshot()}>
+              {snapshotWorking ? ja.settings.working : ja.settings.createSnapshot}
+            </button>
+            <span class="action-result">{snapshotResultText ?? ''}</span>
+            <button
+              type="button"
+              class="button ghost"
+              disabled={!snapshotPath || snapshotOpening}
+              onClick={() => void openSnapshotInFinder()}
+            >
+              {ja.settings.openInFinder}
+            </button>
+          </div>
           <p class="field-help">{ja.settings.createSnapshotHelp}</p>
-        </div>
-        <div class="editor-actions">
-          <button type="button" class="button ghost" disabled={snapshotWorking} onClick={() => void runSnapshot()}>
-            {snapshotWorking ? ja.settings.working : ja.settings.createSnapshot}
-          </button>
-        </div>
-        <div class="settings-result-row">
-          <span class="settings-status">{snapshotResultText ?? ''}</span>
-          <button
-            type="button"
-            class="button ghost"
-            disabled={!snapshotPath || snapshotOpening}
-            onClick={() => void openSnapshotInFinder()}
-          >
-            {ja.settings.openInFinder}
-          </button>
         </div>
         {snapshotError && <p class="field-error">{snapshotError}</p>}
         {snapshotOpenError && <p class="field-error">{snapshotOpenError}</p>}
