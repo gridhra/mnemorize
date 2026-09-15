@@ -24,6 +24,19 @@ async function jsonBody(c: { req: { json: () => Promise<unknown> } }): Promise<R
   return body as Record<string, unknown>
 }
 
+/**
+ * 「この記録に結びつける文字起こしジョブ」の id の配列。
+ * 録音した音声は、記録を保存したこの瞬間にその記録のものになる。
+ */
+function jobIds(body: Record<string, unknown>): string[] | undefined {
+  if (!('transcription_job_ids' in body)) return undefined
+  const raw = body.transcription_job_ids
+  if (!Array.isArray(raw) || raw.some((v) => typeof v !== 'string')) {
+    throw new ValidationError('transcription_job_ids は文字列の配列で送ってください')
+  }
+  return raw as string[]
+}
+
 app.post('/', async (c) => {
   const body = await jsonBody(c)
   const entry = createEntry({
@@ -31,6 +44,7 @@ app.post('/', async (c) => {
     title: (body.title as string | null | undefined) ?? undefined,
     body_md: (body.body_md as string | undefined) ?? '',
     review_enabled: body.review_enabled as boolean | undefined,
+    transcription_job_ids: jobIds(body),
   })
   return c.json({ entry }, 201)
 })
@@ -44,6 +58,7 @@ app.patch('/:id', async (c) => {
     body_md: 'body_md' in body ? String(body.body_md ?? '') : undefined,
     review_enabled: body.review_enabled as boolean | undefined,
     reset_schedule: body.reset_schedule as boolean | undefined,
+    transcription_job_ids: jobIds(body),
   })
   return c.json({ entry })
 })

@@ -5,12 +5,10 @@ import { api, type Entry, type UpcomingDay } from '../api.ts'
 import { ja, formatJapaneseDate } from '../i18n/ja.ts'
 import { EntryCard } from '../components/EntryCard.tsx'
 import { EntryEditor } from '../components/EntryEditor.tsx'
-import { Recorder } from '../components/Recorder.tsx'
-import { TranscribingCard } from '../components/TranscribingCard.tsx'
 import { addDays, monthOf } from '../dates.ts'
 import { formatRoute } from '../router.ts'
 import { useReviewQueueRefresh } from '../queue-context.ts'
-import { useTranscribingJobs } from '../hooks/useTranscribingJobs.ts'
+import { newEntryDraftKey } from '../drafts.ts'
 
 type Props = {
   /** 表示する学習日（YYYY-MM-DD）。 */
@@ -35,17 +33,6 @@ export function Day({ date, today, entryId }: Props) {
   const refreshDueCount = useReviewQueueRefresh()
   // 強調したカードへ一度だけスクロールする（同じ日を見ている間に何度も飛ばない）。
   const scrolledTo = useRef<string | null>(null)
-
-  /** その日の一覧を取り直す。 */
-  function reload() {
-    api
-      .day(date)
-      .then((res) => setEntries(newestFirst(res.entries)))
-      .catch((e) => setError(e instanceof Error ? e.message : ja.error.generic))
-  }
-
-  // 進行中の文字起こしジョブ（今日の画面と同じ扱い）。まだ来ていない日では読まない。
-  const { jobIds, addJob, removeJob, onDone } = useTranscribingJobs(isFuture ? null : date, reload)
 
   useEffect(() => {
     let alive = true
@@ -85,16 +72,18 @@ export function Day({ date, today, entryId }: Props) {
   return (
     <div class="page">
       {/* 移動の帯。月の画面（Calendar）と同じ構造・同じクラスで、
-          「前へ・見出し・次へ・別の画面へ」の4つをこの順に置く。 */}
+          「前へ・見出し・次へ・別の画面へ」の4つをこの順に置く。
+          4つとも「別の場所へ移る」操作なので、ボタンではなくリンクの見た目
+          （.navlink）にする。行為のボタンと見分けが付くように（操作の原則1）。 */}
       <div class="daybar">
-        <a class="button daybar-prev" href={formatRoute({ name: 'day', date: addDays(date, -1) })}>
+        <a class="navlink daybar-prev" href={formatRoute({ name: 'day', date: addDays(date, -1) })}>
           {ja.day.prevDay}
         </a>
         <h1 class="daybar-title">{formatJapaneseDate(date)}</h1>
-        <a class="button daybar-next" href={formatRoute({ name: 'day', date: addDays(date, 1) })}>
+        <a class="navlink daybar-next" href={formatRoute({ name: 'day', date: addDays(date, 1) })}>
           {ja.day.nextDay}
         </a>
-        <a class="button daybar-jump" href={formatRoute({ name: 'calendar', ym: monthOf(date) })}>
+        <a class="navlink daybar-jump" href={formatRoute({ name: 'calendar', ym: monthOf(date) })}>
           {ja.day.toCalendar}
         </a>
       </div>
@@ -138,23 +127,10 @@ export function Day({ date, today, entryId }: Props) {
             <h2 class="section-title">{ja.day.entrySection}</h2>
           </div>
 
-          {jobIds.length > 0 && (
-            <div class="cards">
-              {jobIds.map((jobId) => (
-                <TranscribingCard
-                  key={jobId}
-                  jobId={jobId}
-                  onDone={() => onDone(jobId)}
-                  onDismiss={removeJob}
-                />
-              ))}
-            </div>
-          )}
-
           {entries === null ? (
             <p class="muted">{ja.day.loading}</p>
           ) : entries.length === 0 ? (
-            jobIds.length === 0 && <p class="muted empty">{ja.day.empty}</p>
+            <p class="muted empty">{ja.day.empty}</p>
           ) : (
             <div class="cards">
               {entries.map((e) => (
@@ -186,21 +162,16 @@ export function Day({ date, today, entryId }: Props) {
               initial={{ title: '', body_md: '', review_enabled: true }}
               submitLabel={ja.entry.create}
               showCaptureSlots
-              recorderSlot={
-                // この画面には復習カードが出ないので、録音は常に主操作＝塗りつぶし（設計05§6）。
-                // 文字起こしのジョブは、いま見ている日（date）の記録として作る。
-                <Recorder
-                  dayDate={date}
-                  primary
-                  onJobCreated={addJob}
-                />
-              }
+              draftKey={newEntryDraftKey(date)}
+              // この画面には復習カードが出ないので、録音は常に主操作＝塗りつぶし（設計05§6）。
+              recorder={{ dayDate: date, primary: true }}
               onSubmit={async (v) => {
                 const res = await api.createEntry({
                   day_date: date,
-                  title: v.title.trim() === '' ? null : v.title,
+                  title: v.title,
                   body_md: v.body_md,
                   review_enabled: v.review_enabled,
+                  transcription_job_ids: v.transcription_job_ids,
                 })
                 setEntries((cur) => [res.entry, ...(cur ?? [])])
                 refreshDueCount()

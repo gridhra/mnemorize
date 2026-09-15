@@ -147,7 +147,7 @@ export function ReviewSection({ onActiveChange }: Props) {
               {undoableEntryId && (
                 <button
                   type="button"
-                  class="button ghost review-undo"
+                  class="button review-undo"
                   disabled={undoing}
                   onClick={() => void undo()}
                 >
@@ -159,7 +159,7 @@ export function ReviewSection({ onActiveChange }: Props) {
 
           {total === 0 ? (
             <>
-              <p class="muted empty">
+              <p class="muted review-empty">
                 {/* 今日すでに評価した分があれば「終わりました」、無ければ「ありません」。再読み込み後も同じ文になる */}
                 {queue && queue.reviewed_today > 0
                   ? nextDue
@@ -189,7 +189,7 @@ export function ReviewSection({ onActiveChange }: Props) {
               onRetired={() => advance(ja.review.retired, null)}
             />
           ) : (
-            <p class="muted empty">
+            <p class="muted review-empty">
               {nextDue
                 ? ja.review.finishedWithNext(formatJapaneseDate(nextDue.date), nextDue.count)
                 : ja.review.finished}

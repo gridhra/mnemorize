@@ -1,19 +1,21 @@
 /*
   mnemorize の画面のすべての見た目。規範は docs/design/06-design-system.md
   （部品の役割・状態・配置の規則）と docs/design/05-ui-grand-design.md（画面構成）。
-  部品（3.）とパターン（4.）の並びは、06 文書の §4・§5 と同じ順にしてある。
+  部品（3.）とパターン（4.）の並びは、06 文書の §5・§6 と同じ順にしてある。
+  操作のふるまい（何が起きるか・押す場所がどこに出るか）の規範は 06 文書 §4。
 
   目次
     1. トークン   :root の変数だけ。色・間隔・角丸・字・動き・幅・フォーカス
     2. 基礎       body、.app、.page、地の文、汎用の字（.muted / .hint / .error / .empty）
-    3. 部品       ボタン／上部の帯／移動の帯／カード／状態 1 行／バッジ／入力欄／
-                  チェック／注釈／状態の箱／操作行／一覧／ライトボックス／録音ボタン
+    3. 部品       ボタン／移動のリンク／表示の切り替え／メニュー／確認ダイアログ／
+                  上部の帯／移動の帯／カード／状態 1 行／バッジ／入力欄／チェック／
+                  注釈／状態の箱／操作行／一覧／ライトボックス／録音ボタン
     4. パターン   画面の骨格（帯 → 見出し → 節）、強調
     5. 画面別     設定、カレンダー、復習、検索、画像添付
     6. 狭い画面   640px 未満の規則。同じ強さの規則は後に書いた方が勝つので、
                   ここだけは必ずファイルの最後に置く
 
-  このファイルの決まり（詳しくは 06 文書 §8）
+  このファイルの決まり（詳しくは 06 文書 §9）
     - 色・間隔・字の大きさ・角丸・時間は、直書きせず 1. のトークンだけを使う。
     - 部品固有の寸法（サムネイルの 64px、マスの最小高さなど）は直書きでよい。
       それは「間隔」ではなく、その部品にしか意味を持たない大きさだから。
@@ -216,8 +218,154 @@ body {
 /* 無効：薄くしない。文字を補足の色に、枠を飾りの罫線に落として「いまは押せない」を示す。 */
 .button:disabled { opacity: 1; color: var(--muted); border-color: var(--line); cursor: not-allowed; }
 
-/* リンクをボタンの見た目で使うとき（カレンダーの前後の月など）は下線を消し、ボタンと揃える。 */
+/*
+  取り消せない操作の「確定」だけは塗りつぶす。置いてよいのは確認ダイアログの中だけで、
+  そこは利用者がその操作を選んだあとの画面だから（土台の画面で赤を塗ると「押させたい
+  操作」に見える。06 文書 §5.1・§6.3）。
+*/
+.button.danger-solid { background: var(--danger); border-color: var(--danger); color: var(--accent-text); font-weight: 600; }
+.button.danger-solid:hover:not(:disabled) { background: var(--danger); border-color: var(--danger); filter: brightness(0.9); }
+
+/*
+  文言が入れ替わるボタン（「編集する」⇄「キャンセル」、「復習を終える」⇄「復習を再開する」、
+  「保存する」⇄「保存中…」）。箱の幅を最長の文言に合わせて固定し、押しても位置も大きさも
+  変えない（操作の原則11a）。中身は中央に置く——左寄せだと文字数で字の位置が動く。
+*/
+.button.toggle { min-width: 10em; display: inline-flex; align-items: center; justify-content: center; }
+/* 録音ボタンは 5 通りに変わる。最長は「文字起こしの準備をしています…」。 */
+.button.toggle-record { min-width: 17em; display: inline-flex; align-items: center; justify-content: center; }
+
+/* リンクをボタンの見た目で使うとき（画像の選択欄など）は下線を消し、ボタンと揃える。 */
 a.button { text-decoration: none; display: inline-flex; align-items: center; }
+
+/* ── 移動のリンク（navlink） ──────────────────────────────────────────────
+   「前の日」「カレンダーへ」のような、押すと別の場所へ移るもの。行為のボタンと
+   見分けが付くよう、枠を持たずアクセント色の文字にする（操作の原則1・10）。
+   無効にできる必要がある「今月へ」だけ button 要素だが、見た目はまったく同じ。 */
+.navlink {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--pad-nav);
+  border: var(--border) solid transparent;
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--accent);
+  font: inherit;
+  text-decoration: none;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background-color var(--dur-fast) linear;
+}
+.navlink:hover:not(:disabled) { background: var(--hover-surface); text-decoration: underline; }
+.navlink:focus-visible { outline: var(--focus-width) solid var(--focus); outline-offset: var(--focus-offset); }
+.navlink:disabled { color: var(--muted); cursor: not-allowed; }
+
+/* ── 表示の切り替え（セグメント） ────────────────────────────────────────
+   押しても何も起きず、内容領域に何を出すかが変わるだけの部品。だから文言は名詞、
+   見た目は溝に収まった札で、ボタン（行為）とは別物に見せる（操作の原則1）。
+   選んでも箱の大きさは変わらない（原則11a）。 */
+.segmented {
+  display: inline-flex;
+  gap: var(--sp-hair);
+  padding: var(--sp-hair);
+  border: var(--border) solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-sunken);
+}
+.segment {
+  padding: var(--sp-1) var(--sp-3);
+  border: var(--border) solid transparent;
+  border-radius: calc(var(--radius) - var(--sp-hair));
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: var(--fs-sm);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background-color var(--dur-fast) linear;
+}
+.segment:hover { background: var(--hover-surface); }
+.segment:focus-visible { outline: var(--focus-width) solid var(--focus); outline-offset: var(--focus-offset); }
+/* 選択中は面・枠・太字の 3 つで示す（色だけに頼らない。06 文書 §7）。 */
+.segment[aria-selected='true'] {
+  background: var(--surface);
+  border-color: var(--line-strong);
+  color: var(--text);
+  font-weight: 600;
+}
+/* 編集中は押せない。属性ではなく aria-disabled なので、見た目は色を退かせて示す
+   （opacity は使わない。06 文書 §9.3）。位置と大きさは変えない。 */
+.segmented.is-disabled .segment { color: var(--muted); cursor: not-allowed; }
+.segmented.is-disabled .segment:hover { background: transparent; }
+.segmented.is-disabled .segment[aria-selected='true'] {
+  background: transparent;
+  border-color: var(--line);
+  color: var(--muted);
+}
+
+/* ── メニュー（「⋯」で開く重ね合わせの層） ──────────────────────────────
+   土台の面の上に浮かせる。行内に開いて周囲を押し広げてはならない（操作の原則2）。 */
+.more { position: relative; display: inline-flex; }
+.more-button { padding: var(--sp-2) var(--sp-3); line-height: 1; }
+.more-menu {
+  position: absolute;
+  top: calc(100% + var(--sp-1));
+  right: 0;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--sp-1);
+  /* 幅は最長の項目に合わせる（項目は 1 行の動詞だけなので、はみ出さない）。
+     右端は「⋯」に揃えるので、カードの右端より外へは出ない。 */
+  min-width: max-content;
+  padding: var(--sp-2);
+  border: var(--border) solid var(--line-strong);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+.menu-item {
+  padding: var(--sp-2) var(--sp-3);
+  border: var(--border) solid transparent;
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: var(--fs-sm);
+  text-align: left;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background-color var(--dur-fast) linear;
+}
+.menu-item:hover { background: var(--hover-surface); }
+.menu-item:focus-visible { outline: var(--focus-width) solid var(--focus); outline-offset: calc(var(--focus-offset) * -1); }
+.menu-item.danger { color: var(--danger); }
+.menu-item.danger:hover { background: var(--danger-wash); }
+/* 「⋯」の中の区切り線。これより下は記録そのものを消す操作。 */
+.more-menu-sep {
+  width: 100%;
+  height: 0;
+  margin: var(--sp-1) 0;
+  border: 0;
+  border-top: var(--border) solid var(--line);
+}
+
+/* ── 確認ダイアログ（元に戻せない操作にだけ） ────────────────────────────
+   <dialog> の showModal() を使う。フォーカスの閉じ込めと Escape はブラウザが持つ。 */
+.dialog {
+  max-width: 28em;
+  padding: 0;
+  border: var(--border) solid var(--line-strong);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--text);
+}
+.dialog::backdrop { background: var(--overlay); }
+.dialog-box { display: flex; flex-direction: column; gap: var(--sp-3); padding: var(--sp-4); }
+.dialog-title { font-size: var(--fs-h3); margin: 0; }
+.dialog-body { margin: 0; font-size: var(--fs-sm); }
+.dialog-actions { display: flex; justify-content: flex-end; gap: var(--sp-2); flex-wrap: wrap; }
 
 /* ── 上部の帯とナビ ──────────────────────────────────────────────────────
    左にアプリ名、右に 4 つの入口。入口の数と並びは状態で変えない。 */
@@ -246,7 +394,7 @@ a.button { text-decoration: none; display: inline-flex; align-items: center; }
 }
 .topnav a:hover { background: var(--surface); }
 .topnav a:focus-visible { outline: var(--focus-width) solid var(--focus); outline-offset: var(--focus-offset); }
-/* 現在地は色だけでなく、面・枠・太字の 3 つで示す（色だけに頼らない。06 文書 §6）。 */
+/* 現在地は色だけでなく、面・枠・太字の 3 つで示す（色だけに頼らない。06 文書 §7）。 */
 .topnav a[aria-current='page'] {
   background: var(--surface);
   border-color: var(--line);
@@ -280,7 +428,7 @@ a.button { text-decoration: none; display: inline-flex; align-items: center; }
   gap: var(--sp-2);
   margin-bottom: var(--sp-4);
 }
-.daybar .button { display: inline-flex; align-items: center; justify-content: center; }
+.daybar .navlink { display: inline-flex; align-items: center; justify-content: center; }
 .daybar-prev { grid-area: prev; }
 .daybar-next { grid-area: next; }
 .daybar-jump { grid-area: jump; }
@@ -308,34 +456,24 @@ a.button { text-decoration: none; display: inline-flex; align-items: center; }
 .card-title { font-size: var(--fs-body); margin: 0 0 var(--sp-2); flex: 1; }
 .card-meta { display: flex; gap: var(--sp-tight); flex-wrap: wrap; }
 .card-body { margin-top: var(--sp-1); }
-.card-actions { display: flex; align-items: flex-start; gap: var(--sp-2); flex-wrap: wrap; margin-top: var(--sp-3); }
-/* 文字起こし中のカード。まだ中身が確定していないことを破線で示す。 */
-.transcribing { border-style: dashed; }
 .review-card { margin-top: var(--sp-3); }
 
-/* 「その他」の畳んだ操作。 */
-.more { position: relative; }
-.more > summary { list-style: none; display: inline-block; }
-.more > summary::-webkit-details-marker { display: none; }
-.more-menu {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: var(--sp-1);
-  margin-top: var(--sp-tight);
-  padding: var(--sp-2);
-  border: var(--border) solid var(--line);
-  border-radius: var(--radius);
-  background: var(--surface);
+/* 記録カードの操作の帯。内容領域の「上」に置くのが肝で、中身がどれだけ伸び縮み
+   しても「編集する」⇄「キャンセル」の座標が動かない（操作の原則11b）。
+   桁を grid で決め、行為の組（3 桁目）は切り替え（2 桁目）の右に左詰めで置く
+   ——右寄せにすると、隣のボタンの文字数で「編集する」の位置が動く。 */
+.entry-toolbar {
+  display: grid;
+  grid-template-columns: auto auto minmax(0, 1fr);
+  align-items: center;
+  gap: var(--sp-2);
+  margin: var(--sp-2) 0 var(--sp-3);
 }
-/* 「その他」の中の区切り線。これより下は記録そのものを消す操作。 */
-.more-menu-sep {
-  width: 100%;
-  height: 0;
-  margin: var(--sp-1) 0;
-  border: 0;
-  border-top: var(--border) solid var(--line);
-}
+.entry-tools { display: flex; align-items: center; gap: var(--sp-2); }
+/* 操作の結果を出す決まった場所（操作の原則4）。 */
+.entry-notice { margin: 0 0 var(--sp-2); }
+/* 内容領域。表示の切り替えで中身だけが差し替わる。 */
+.card-panel { min-height: 2em; }
 
 /* ── 状態 1 行 ──────────────────────────────────────────────────────────
    「次の復習9月18日（金）・3日後・2回目」のような、いまの状態を述べる 1 行。
@@ -468,13 +606,7 @@ a.button { text-decoration: none; display: inline-flex; align-items: center; }
   overflow-wrap: anywhere;
 }
 
-/* ── 一覧（key-value） ───────────────────────────────────────────────── */
-.kv { display: grid; grid-template-columns: max-content 1fr; gap: var(--sp-1) var(--sp-4); font-size: var(--fs-sm); }
-.kv dt { color: var(--muted); }
-.kv dd { margin: 0; word-break: break-all; }
-
-/* ── 履歴（本文の履歴・復習の記録。どちらもカードの下に開く） ──────────── */
-.history { margin-top: var(--sp-3); border-top: var(--border) solid var(--line); padding-top: var(--sp-3); }
+/* ── 履歴（本文の履歴・復習の記録。どちらも内容領域の中に出す） ────────── */
 .history-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--sp-3); }
 .history-head {
   display: flex;
@@ -515,9 +647,18 @@ a.button { text-decoration: none; display: inline-flex; align-items: center; }
 /* ── 録音ボタンとその状態表示 ────────────────────────────────────────────
    同じボタンが「録音して記録する」と「停止して文字起こしする」を切り替える
    （別のボタンが生えるのではない。原則B）。 */
-.recorder { display: flex; align-items: center; gap: var(--sp-2); flex-wrap: wrap; }
+.recorder { display: flex; flex-direction: column; align-items: flex-start; gap: var(--sp-1); }
 .recorder-slot { margin-bottom: var(--sp-1); }
+/* 状態行は 1 つだけ。待機中は「録音は最長10分です」、録音中は経過と音量、停止後は
+   文字起こしの状態が、同じ場所で入れ替わる（原則B）。空でも高さを空けておく。 */
 .recorder-status {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+  width: 100%;
+  min-height: 1.5em;
+}
+.recorder-live {
   display: inline-flex;
   align-items: center;
   gap: var(--sp-2);
@@ -535,6 +676,16 @@ a.button { text-decoration: none; display: inline-flex; align-items: center; }
 .recorder-meter-bar { display: block; height: 100%; background: currentColor; transition: width var(--dur-meter) linear; }
 /* 許可を求める案内。出ても出なくても高さが動かないように場所を空けておく。 */
 .recorder-permission-hint { display: block; min-height: 1.2em; width: 100%; }
+/* 文字起こしの状態1行。録音ボタンのすぐ下、いつも同じ場所に出す（原則B）。
+   録音のたびに1行ずつ増える（1つの記録に何度も録音できる）。 */
+.transcribe-status {
+  display: flex;
+  align-items: baseline;
+  gap: var(--sp-2);
+  flex-wrap: wrap;
+  width: 100%;
+}
+.transcribe-status .status-line { margin: 0; }
 
 /* ═══ 4. パターン ═══════════════════════════════════════════════════════ */
 
@@ -627,10 +778,49 @@ a.button { text-decoration: none; display: inline-flex; align-items: center; }
    塗りつぶしをどれにも付けない（1 つを塗ると「これを選べ」と読める。05 文書 §6）。 */
 .review-notice { margin: 0 0 var(--sp-3); display: flex; align-items: center; gap: var(--sp-2); flex-wrap: wrap; }
 .review-undo { padding: var(--pad-button-sm); font-size: var(--fs-sm); }
-.review-cue { margin-bottom: var(--sp-3); }
-.review-recall-prompt { margin: 0; font-size: var(--fs-sm); text-align: center; }
-.review-open { display: flex; flex-direction: column; align-items: center; gap: var(--sp-2); padding: var(--sp-7) 0; }
-.review-open-button { font-size: var(--fs-h3); padding: var(--sp-4) var(--sp-7); }
+/* 見出し行。左が見出し（長ければ折り返す）、右端が「復習を終える」（折り返さない）。
+   「復習を終える」は評価の帯の外で、開く前も開いた後も同じ位置に出る。 */
+.review-head { flex-wrap: nowrap; justify-content: space-between; }
+/* 見出しは 1 行に切り詰める（表面に全文が出るため）。見出しの行数で帯の位置が記録ごとに変わらないようにする（原則 11c） */
+.review-head .card-title { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.review-head .button { flex: none; }
+/* 開く前の内容領域＝カードの表面。見出し・手がかり・促しの一文を縦に積んで中央に置く
+   （以前は促しの一文だけが広い枠の真ん中に浮いていて、空洞に見えた）。 */
+.review-face {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-2);
+  min-height: 100%;
+  text-align: center;
+}
+.review-face-cue { margin: 0; font-size: var(--fs-sm); color: var(--muted); font-variant-numeric: tabular-nums; }
+.review-face-prompt { margin: 0; font-size: var(--fs-sm); color: var(--muted); }
+/* 復習が残っていないときの 1 行。内容領域は出さないので、余白も作らない。 */
+.review-empty { margin: 0; }
+/*
+  内容領域の高さを固定し、中だけをスクロールさせる。本文が 3 行の記録でも 3 画面ぶんの
+  記録でも、下の操作の帯が同じ座標に出るようにするため（操作の原則11c）。何十件も
+  続けて評価するとき、押す場所が記録ごとに動くのがいちばん効く邪魔になる。
+*/
+.review-content {
+  height: 12rem;
+  overflow-y: auto;
+  padding-right: var(--sp-1);
+}
+/* 操作の帯。開く前は「思い出せたら開く」、開いた後は評価の 3 ボタンが同じ場所に出る。 */
+.review-actionbar {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--sp-2);
+  margin-top: var(--sp-3);
+  padding-top: var(--sp-3);
+  border-top: var(--border) solid var(--line);
+}
+.review-key-hint { text-align: center; }
+.review-open-button { align-self: center; font-size: var(--fs-h3); padding: var(--sp-4) var(--sp-7); }
 .review-images { display: flex; flex-wrap: wrap; gap: var(--sp-2); margin: var(--sp-3) 0; }
 .review-images img {
   max-width: 100%;
@@ -638,14 +828,16 @@ a.button { text-decoration: none; display: inline-flex; align-items: center; }
   border-radius: var(--radius);
   border: var(--border) solid var(--line);
 }
-.review-note { margin-top: var(--sp-4); }
-.review-note-actions { display: flex; align-items: center; gap: var(--sp-2); margin-top: var(--sp-tight); }
+/* 書き足す欄。1 行から始めて入力に応じて伸びる（高さは JS が付ける）。
+   本文を圧迫しないよう、ラベルは placeholder に畳み、ボタンは同じ行の右に置く。 */
+.review-note { display: flex; align-items: flex-start; gap: var(--sp-2); margin-top: var(--sp-4); }
+.review-note-input { flex: 1; min-width: 0; min-height: 0; resize: none; overflow: hidden; }
+.review-note-saved { display: block; margin-top: var(--sp-tight); }
 
 .rating-grid {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
   gap: var(--sp-2);
-  margin-top: var(--sp-5);
 }
 .rating-button {
   display: flex;
@@ -713,7 +905,6 @@ a.button { text-decoration: none; display: inline-flex; align-items: center; }
 
 /* ── 画像添付（要件 C6） ────────────────────────────────────────────────── */
 .capture-slots { display: flex; align-items: center; gap: var(--sp-2); flex-wrap: wrap; }
-.pending { font-size: var(--fs-xs); color: var(--muted); }
 .dropzone {
   flex: 1;
   min-width: 180px;
@@ -799,12 +990,31 @@ a.button { text-decoration: none; display: inline-flex; align-items: center; }
     row-gap: var(--sp-2);
   }
   .daybar-title { font-size: var(--fs-body); }
-  .daybar .button { padding: var(--sp-2) var(--sp-snug); }
+  .daybar .navlink { padding: var(--sp-2) var(--sp-snug); }
   .daybar-jump { width: 100%; }
 
   /* 上部の帯：アプリ名と入口を 2 段に分ける（入口の数と並びは変えない）。 */
   .topbar { flex-wrap: wrap; row-gap: var(--sp-2); }
   .topnav { width: 100%; margin-left: 0; justify-content: space-between; }
+
+  /* 記録カードの操作の帯：切り替えと行為を 2 段に分ける（並ぶ順は広い画面と同じ）。
+     行為の組は左端に揃うので、「編集する」⇄「キャンセル」の座標は変わらない。 */
+  .entry-toolbar { grid-template-columns: minmax(0, 1fr); }
+  .segmented { width: 100%; justify-content: space-between; }
+  .segment { padding: var(--sp-1) var(--sp-2); font-size: var(--fs-xs); }
+  .button.toggle { min-width: 8em; }
+  .button.toggle-record { min-width: 100%; }
+  /* 復習の内容領域は画面が低いぶん浅くする（帯の座標は記録によらず同じまま）。 */
+  .review-content { height: 10rem; }
+
+  /* 「⋯」のメニュー：狭い画面では操作の帯が 2 段になり「⋯」が左端に来るので、
+     右端を「⋯」に揃えると画面の左へはみ出す（幅400pxで左端が-46pxになった実測あり）。
+     左端を「⋯」に揃えて右へ開くと、カードの中に収まる。 */
+  .more-menu {
+    right: auto;
+    left: 0;
+    max-width: calc(100vw - var(--sp-4) * 2);
+  }
 
   /* 設定の操作行：縦に積む（並ぶ順は広い画面と同じ）。 */
   .action-row, .action-row-single { grid-template-columns: minmax(0, 1fr); justify-items: start; }

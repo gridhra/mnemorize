@@ -18,20 +18,19 @@ const app = new Hono()
 
 const STATUSES: JobStatus[] = ['queued', 'running', 'done', 'failed']
 
-/** multipart でも `audio/wav` の生ボディでも受ける。 */
-async function readUpload(
-  c: Context,
-): Promise<{ wav: Uint8Array; entryId: string | null; dayDate: string | null }> {
+/**
+ * multipart でも `audio/wav` の生ボディでも受ける。
+ * ジョブは記録を作らないので、受け取るのは音声と学習日（覚え書き）だけ。
+ */
+async function readUpload(c: Context): Promise<{ wav: Uint8Array; dayDate: string | null }> {
   const contentType = c.req.header('content-type') ?? ''
   if (contentType.includes('multipart/form-data')) {
     const form = await c.req.formData()
     const file = form.get('audio') ?? form.get('file')
     if (!(file instanceof File)) throw new ValidationError('audio というファイル欄が必要です')
-    const entryId = form.get('entry_id')
     const dayDate = form.get('day_date')
     return {
       wav: new Uint8Array(await file.arrayBuffer()),
-      entryId: typeof entryId === 'string' && entryId.length > 0 ? entryId : null,
       dayDate: typeof dayDate === 'string' && dayDate.length > 0 ? dayDate : null,
     }
   }
@@ -39,7 +38,6 @@ async function readUpload(
   const q = c.req.query()
   return {
     wav: new Uint8Array(buf),
-    entryId: q.entry_id && q.entry_id.length > 0 ? q.entry_id : null,
     dayDate: q.day_date && q.day_date.length > 0 ? q.day_date : null,
   }
 }
@@ -63,8 +61,8 @@ app.get('/', (c) => {
 })
 
 app.post('/', async (c) => {
-  const { wav, entryId, dayDate } = await readUpload(c)
-  const job = await createJob({ wav, entryId, dayDate })
+  const { wav, dayDate } = await readUpload(c)
+  const job = await createJob({ wav, dayDate })
   return c.json({ job_id: job.id, job }, 202)
 })
 
@@ -77,6 +75,8 @@ app.post('/:id/retry', (c) => {
 })
 
 // 失敗したジョブを画面から閉じる（永続的に一覧から除く）。
+// いまの画面からは呼んでいない（文字起こしの状態はフォームの中に出るので「閉じる」操作が無い）。
+// 既に閉じた記録を持つ手元の DB との互換のために残してある。
 app.post('/:id/dismiss', (c) => {
   const job = dismissJob(c.req.param('id'), now())
   return c.json({ job_id: job.id, job })

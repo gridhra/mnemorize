@@ -1,5 +1,10 @@
-// 文字起こしジョブの管理。キュー（同時実行 1）、進捗の配信、後処理、記録への反映。
+// 文字起こしジョブの管理。キュー（同時実行 1）、進捗の配信、後処理。
 // 外界に触れる処理は adapters/asr-whisper-cli.ts と adapters/audio-files.ts に閉じ込めてある。
+//
+// ジョブは記録（エントリ）を作らない。文字起こしの結果は SSE で画面の本文欄に流れ込み、
+// 利用者が手直しして「記録する」「保存」を押したときに、記録の作成・更新の API に
+// `transcription_job_ids` として渡される。そこで初めて音声とジョブが記録に結びつく
+// （下の attachJobsToEntry）。
 import { getDb } from '../db/connection.ts'
 import { now as clockNow, toLocalIso, localDate } from '../adapters/clock.ts'
 import {
@@ -15,7 +20,9 @@ import {
   type AsrSegment,
 } from '../adapters/asr-whisper-cli.ts'
 import { boundaryHour, getSettings } from './settings.ts'
-import { ValidationError, NotFoundError, createEntry, getEntry, updateEntry } from './entries.ts'
+// エラー型は errors.ts から直接取る。entries.ts から取ると
+// 「entries.ts → transcribe.ts（attachJobsToEntry）」との循環インポートになる。
+import { ValidationError, NotFoundError } from './errors.ts'
 
 export type JobStatus = 'queued' | 'running' | 'done' | 'failed'
 
@@ -226,9 +233,10 @@ function ensureRecovered(): void {
 export type CreateJobInput = {
   /** 録音した WAV の中身 */
   wav: Uint8Array
-  /** 既存の記録に追記する場合その id */
-  entryId?: string | null
-  /** 記録をこれから作る場合の学習日 */
+  /**
+   * どの学習日の録音か。記録を作るためではなく、保存されなかったジョブを
+   * あとから見分けるための覚え書き。省略すると今の学習日になる。
+   */
   dayDate?: string | null
 }
 
@@ -238,12 +246,12 @@ export async function createJob(input: CreateJobInput, now: Date = clockNow()): 
   if (!input.wav || input.wav.byteLength === 0) {
     throw new ValidationError('音声データが空です')
   }
-  if (input.entryId) getEntry(input.entryId) // 存在しなければ 404
   // WAV として読めない入力は「入力の誤り」（400）として返す。
   // WavParseError のままだと 500（サーバー内部エラー）になり、原因が利用者に伝わらない。
+  // 音声は記録に結びつけずに保存する（結びつけるのは記録を保存したとき）。
   let saved
   try {
-    saved = await saveAudio(input.wav, { entryId: input.entryId ?? null, now })
+    saved = await saveAudio(input.wav, { entryId: null, now })
   } catch (e) {
     if (e instanceof WavParseError) {
       throw new ValidationError(`WAV 形式の音声を送ってください（${e.message}）`)
@@ -255,9 +263,9 @@ export async function createJob(input: CreateJobInput, now: Date = clockNow()): 
   getDb()
     .query(
       `INSERT INTO transcription_jobs (id, entry_id, audio_attachment_id, status, created_at, day_date)
-       VALUES (?, ?, ?, 'queued', ?, ?)`,
+       VALUES (?, NULL, ?, 'queued', ?, ?)`,
     )
-    .run(id, input.entryId ?? null, saved.attachmentId, toLocalIso(now), dayDate)
+    .run(id, saved.attachmentId, toLocalIso(now), dayDate)
   queue.push(id)
   // 呼び出し元に queued の状態を返してから動かす（202 を返してから走らせる）。
   queueMicrotask(() => void pump())
@@ -265,8 +273,35 @@ export async function createJob(input: CreateJobInput, now: Date = clockNow()): 
 }
 
 /**
+ * 文字起こしジョブを記録に結びつける。記録の作成・更新のときに呼ぶ
+ * （`POST /api/entries` と `PATCH /api/entries/:id` の `transcription_job_ids`）。
+ * ジョブ本体と、そのジョブが持っていた音声の添付の両方を、その記録のものにする。
+ * 文字起こしのまま（編集前）の文＝ raw_text はジョブ側に残したままにする（検索が使う）。
+ *
+ * 見つからない id と、既に別の記録に結びついているジョブは ValidationError（400）。
+ * 同じ記録に結びついたジョブをもう一度渡した場合は何もしない（保存のやり直しで失敗させない）。
+ */
+export function attachJobsToEntry(jobIds: string[], entryId: string): void {
+  const db = getDb()
+  for (const jobId of jobIds) {
+    const job = rowOf(jobId)
+    if (!job) throw new ValidationError(`文字起こしジョブが見つかりません: ${jobId}`)
+    if (job.entry_id && job.entry_id !== entryId) {
+      throw new ValidationError(`この文字起こしは別の記録に結びついています: ${jobId}`)
+    }
+    if (job.entry_id === entryId) continue
+    db.query('UPDATE transcription_jobs SET entry_id = ? WHERE id = ?').run(entryId, jobId)
+    if (job.audio_attachment_id) attachAudioToEntry(job.audio_attachment_id, entryId)
+  }
+}
+
+/**
  * 失敗したジョブを画面から閉じる（永続的に一覧から除く）。
  * `failed` 以外（queued / running / done）は状態が変わり得るので閉じられない。
+ *
+ * いまの画面からは使っていない（文字起こしの状態は新規作成・編集のフォームの中に出るので、
+ * 「閉じる」操作そのものが無い）。API とマイグレーション 0004 の `dismissed_at` 列は、
+ * 既に閉じた記録を持つ手元の DB と食い違わないように残してある。
  */
 export function dismissJob(id: string, now: Date = clockNow()): JobRow {
   ensureRecovered()
@@ -285,7 +320,7 @@ export function retryJob(id: string): JobRow {
   ensureRecovered()
   const job = getJob(id)
   if (job.status === 'queued' || job.status === 'running') return job
-  // 完了済みのジョブは再試行しない。もう一度走らせると同じ文章が本文に二重で追記される。
+  // 完了済みのジョブは再試行しない。もう一度走らせると同じ文章が本文欄に二重で流れ込む。
   if (job.status === 'done') {
     throw new ValidationError('この文字起こしは完了しています。再試行はできません')
   }
@@ -359,47 +394,26 @@ async function runJob(id: string): Promise<void> {
       return
     }
 
-    // 本文への反映とジョブ完了の記録を 1 つのトランザクションにまとめる。
-    // 別々に確定すると、間で失敗したときに「本文は書かれたのにジョブは失敗」となり、
-    // 再試行で同じ文章がもう一度追記されてしまう。
+    // 記録には触れない。結果を残して done にするだけで、本文欄への反映は画面が行う。
     const now = toLocalIso(clockNow())
-    let entryId = ''
-    db.transaction(() => {
-      entryId = applyToEntry(job, post.text)
-      db.query(
-        `UPDATE transcription_jobs
-            SET status = 'done', raw_text = ?, segments_json = ?, warnings_json = ?,
-                model = ?, prompt = ?, entry_id = ?, error = NULL, finished_at = ?
-          WHERE id = ?`,
-      ).run(
-        result.text,
-        JSON.stringify(post.segments),
-        post.warnings.length > 0 ? JSON.stringify(post.warnings) : null,
-        result.model,
-        result.prompt,
-        entryId,
-        now,
-        id,
-      )
-      if (job.audio_attachment_id) attachAudioToEntry(job.audio_attachment_id, entryId)
-    })()
-    emit({ type: 'done', job_id: id, entry_id: entryId, text: post.text })
+    db.query(
+      `UPDATE transcription_jobs
+          SET status = 'done', raw_text = ?, segments_json = ?, warnings_json = ?,
+              model = ?, prompt = ?, error = NULL, finished_at = ?
+        WHERE id = ?`,
+    ).run(
+      result.text,
+      JSON.stringify(post.segments),
+      post.warnings.length > 0 ? JSON.stringify(post.warnings) : null,
+      result.model,
+      result.prompt,
+      now,
+      id,
+    )
+    emit({ type: 'done', job_id: id, entry_id: job.entry_id, text: post.text })
   } catch (e) {
     finishFailed(id, e instanceof Error ? e.message : String(e))
   }
-}
-
-/** 記録に反映する。既存の記録があれば本文末尾に空行を挟んで追記、無ければ新しく作る。 */
-function applyToEntry(job: JobRow, text: string): string {
-  if (job.entry_id) {
-    const current = getEntry(job.entry_id)
-    const body =
-      current.body_md.trim().length > 0 ? `${current.body_md.replace(/\s+$/, '')}\n\n${text}` : text
-    updateEntry(job.entry_id, { body_md: body })
-    return job.entry_id
-  }
-  const entry = createEntry({ day_date: job.day_date ?? undefined, body_md: text })
-  return entry.id
 }
 
 function finishFailed(

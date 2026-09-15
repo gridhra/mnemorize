@@ -5,11 +5,9 @@ import { api, type Entry } from '../api.ts'
 import { ja, formatJapaneseDate } from '../i18n/ja.ts'
 import { EntryCard } from '../components/EntryCard.tsx'
 import { EntryEditor } from '../components/EntryEditor.tsx'
-import { Recorder } from '../components/Recorder.tsx'
 import { ReviewSection } from '../components/ReviewSection.tsx'
-import { TranscribingCard } from '../components/TranscribingCard.tsx'
 import { useReviewQueueRefresh } from '../queue-context.ts'
-import { useTranscribingJobs } from '../hooks/useTranscribingJobs.ts'
+import { newEntryDraftKey } from '../drafts.ts'
 
 type Props = { today: string }
 
@@ -25,17 +23,6 @@ export function Today({ today }: Props) {
   // 「録音して記録する」は枠線に落とす（塗りつぶしは画面に 1 つ。設計 05 §6）。
   const [reviewActive, setReviewActive] = useState(false)
   const refreshDueCount = useReviewQueueRefresh()
-
-  /** その日の一覧を取り直す。 */
-  function reload() {
-    api
-      .day(today)
-      .then((res) => setEntries(newestFirst(res.entries)))
-      .catch((e) => setError(e instanceof Error ? e.message : ja.error.generic))
-  }
-
-  // 進行中の文字起こしジョブ。新しいものを先頭に出す（要件 C2）。
-  const { jobIds, addJob, removeJob, onDone } = useTranscribingJobs(today, reload)
 
   useEffect(() => {
     let alive = true
@@ -75,19 +62,15 @@ export function Today({ today }: Props) {
             initial={{ title: '', body_md: '', review_enabled: true }}
             submitLabel={ja.entry.create}
             showCaptureSlots
-            recorderSlot={
-              <Recorder
-                dayDate={today}
-                primary={!reviewActive}
-                onJobCreated={addJob}
-              />
-            }
+            draftKey={newEntryDraftKey(today)}
+            recorder={{ dayDate: today, primary: !reviewActive }}
             onSubmit={async (v) => {
               const res = await api.createEntry({
                 day_date: today,
-                title: v.title.trim() === '' ? null : v.title,
+                title: v.title,
                 body_md: v.body_md,
                 review_enabled: v.review_enabled,
+                transcription_job_ids: v.transcription_job_ids,
               })
               setEntries((cur) => [res.entry, ...(cur ?? [])])
               refreshDueCount()
@@ -97,23 +80,10 @@ export function Today({ today }: Props) {
           />
         </div>
 
-        {jobIds.length > 0 && (
-          <div class="cards">
-            {jobIds.map((jobId) => (
-              <TranscribingCard
-                key={jobId}
-                jobId={jobId}
-                onDone={() => onDone(jobId)}
-                onDismiss={removeJob}
-              />
-            ))}
-          </div>
-        )}
-
         {entries === null ? (
           <p class="muted">{ja.today.loading}</p>
         ) : entries.length === 0 ? (
-          jobIds.length === 0 && <p class="muted empty">{ja.today.empty}</p>
+          <p class="muted empty">{ja.today.empty}</p>
         ) : (
           <div class="cards">
             {entries.map((e) => (

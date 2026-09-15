@@ -71,7 +71,7 @@ export function Search({ q }: Props) {
           }}
           {...ime.handlers}
         />
-        <button type="button" class="button ghost" onClick={() => run()}>
+        <button type="button" class="button" onClick={() => run()}>
           {ja.search.run}
         </button>
       </div>

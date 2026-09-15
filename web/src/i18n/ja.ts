@@ -1,11 +1,5 @@
 // UI の文言はすべてここに集める（要件 J1）。ほかのファイルに日本語の表示文字列を書かないこと。
 
-/**
- * 「もう復習しない」の確認文。今日の画面（復習カード）と記録カードで同じ文を使う
- * （同じ操作はどの画面でも同じ確認文にする）。
- */
-const RETIRE_CONFIRM = 'この記録をもう復習しないようにします。日付の一覧には残ります。よろしいですか。'
-
 /** 「◯日後」。今日ぶんと、期限を過ぎているぶんも同じ言い方で書く。 */
 function relativeDays(days: number): string {
   if (days > 0) return `${days}日後`
@@ -15,6 +9,10 @@ function relativeDays(days: number): string {
 
 export const ja = {
   appName: 'mnemorize',
+  /** どの確認ダイアログでも中止の言い方は 1 つに固定する（操作の原則3）。 */
+  common: {
+    cancel: 'キャンセル',
+  },
   nav: {
     today: '今日',
     calendar: 'カレンダー',
@@ -69,17 +67,28 @@ export const ja = {
   entry: {
     titleLabel: '見出し（省略可）',
     titleHint: '省略すると本文の先頭1文を使います。復習のとき最初に見えるのはこの1行です。',
+    /** 編集のときは、いまの見出しが入った状態で出るので、言い方を変える。 */
+    titleHintEdit: '変えなければ本文の先頭1文が見出しになります。復習のとき最初に見えるのはこの1行です。',
+    /** 見出し欄が空のとき、本文から自動で作られる見出しを先に見せる。 */
+    titlePlaceholderAuto: (headline: string) => `本文の先頭1文：「${headline}」`,
     bodyLabel: '本文',
     bodyPlaceholder: '今日やったことを書く。あとで思い出せるように、要点を2〜3個。',
     reviewEnabled: '復習の対象にする',
-    save: '保存',
+    save: '保存する',
     saving: '保存中…',
-    cancel: 'やめる',
-    edit: '編集',
+    cancel: 'キャンセル',
+    edit: '編集する',
     create: '記録する',
-    reviewLog: '復習の記録',
-    history: '本文の履歴',
-    more: 'その他',
+    /** 内容領域の表示を切り替えるセグメント（行為ではないので名詞。操作の原則1・10）。 */
+    tabBody: '本文',
+    tabReviewLog: '復習の記録',
+    tabHistory: '本文の履歴',
+    tabImages: '画像',
+    /** 内容領域が何を出しているかを支援技術に伝える名前。 */
+    tabsLabel: 'この記録の表示',
+    /** ほかの操作のメニューを開くボタン。記号だけなので読み上げ用の名前を別に持つ。 */
+    moreLabel: '⋯',
+    moreAria: 'ほかの操作を開く',
     historyEmpty: 'まだ本文の履歴はありません',
     historyLoading: '読み込み中…',
     /** 履歴の各版の見出し。「第3版（2026年9月15日 14:30に保存）」 */
@@ -87,8 +96,8 @@ export const ja = {
     /** いまの本文と中身が同じ版に添える札。この版には「戻す」ことがないので操作は無効にする。 */
     historyCurrent: 'いまの内容',
     historyRevert: 'この版に戻す',
-    historyRevertConfirm:
-      'この版の内容に戻します。いまの内容は履歴に新しい版として残るので、あとから戻すこともできます。よろしいですか。',
+    /** 戻す操作は履歴に新しい版が積まれるだけで元に戻せるので、確認せず実行して結果だけ出す。 */
+    historyReverted: 'この版の内容に戻しました。直前の内容は履歴に新しい版として残っています。',
     // 「復習の記録」の中身（いまの状態と、これまでの履歴）
     reviewLogLoading: '読み込み中…',
     /** 1度も復習していない記録では、状態の代わりにこの1行だけを出す。 */
@@ -100,22 +109,21 @@ export const ja = {
     reviewLogRetrievabilityHint: 'いま本文を見ずに思い出せる確率の推定です。',
     reviewLogReps: (n: number) => `復習した回数：${n}回`,
     reviewLogLapses: (n: number) => `忘れた回数：${n}回`,
-    /** 追記の録音が文字起こし中であることを、編集中のカードに出す。 */
-    appendTranscribing: '書き足す音声を文字起こししています…',
-    retire: 'もう復習しない',
-    retireHint: '記録は残り、復習の予定だけ止まります。',
+    retire: '復習を終える',
+    /* 可逆性は、同じ位置の項目名が「復習を再開する」に変わることで示す（注釈は置かない）。 */
     unretire: '復習を再開する',
-    retireConfirm: RETIRE_CONFIRM,
-    /** 記録そのものの削除（「もう復習しない」＝予定を止めるだけ、とは別の操作）。 */
-    delete: 'この記録を削除する',
-    deleteHint: '「もう復習しない」と違い、記録そのものが消えます。',
-    deleteConfirm:
-      'この記録を削除します。本文・画像・録音・復習の記録もすべて消え、元に戻せません。よろしいですか。',
+    /** 記録そのものの削除（「復習を終える」＝予定を止めるだけ、とは別の操作）。 */
+    delete: '記録を削除する',
+    /** 確認ダイアログ：見出しは動詞句、本文は何が起きるか＋戻せるか。 */
+    deleteDialogTitle: '記録を削除する',
+    deleteDialogBody:
+      '「復習を終える」と違い、記録そのものが消えます。この記録の本文・画像・録音・復習の記録をすべて消します。元に戻せません。',
     resetSchedule: '内容を作り直したので復習を最初からやり直す',
     resetScheduleHint: 'これまでの復習の予定が翌日からやり直しになります。',
-    resetScheduleAction: '復習をもう一度最初から',
-    resetScheduleConfirm:
-      'この記録の復習を最初からやり直します。これまでの予定は翌日からのやり直しになります。よろしいですか。',
+    resetScheduleAction: '復習を最初からやり直す',
+    resetScheduleDialogTitle: '復習を最初からやり直す',
+    resetScheduleDialogBody:
+      'これまでに積み上げた復習の予定を捨て、翌日からやり直します。元に戻せません。',
     /** カードの状態1行：「次の復習 9月18日（金）・3日後・2回目」 */
     scheduleLine: (date: string, days: number, reps: number) =>
       `次の復習 ${date}・${relativeDays(days)}・${reps}回目`,
@@ -137,23 +145,27 @@ export const ja = {
     emptyRecording: '音が録れませんでした。もう一度お試しください。',
     autoStopped: '最長10分に達したので自動で停止しました。',
     appendToEntry: '録音して書き足す',
-    maxMinutes: '最長10分',
+    maxMinutes: '録音は最長10分です',
   },
+  /**
+   * 文字起こしの状態1行。録音ボタンのすぐ下、新規作成・編集のフォームの中に出る
+   * （文字起こしは独立したカードではなく、いま書いているフォームの一部）。
+   */
   transcribe: {
-    title: '文字起こし中…',
-    elapsed: (sec: number) => `経過 ${sec} 秒`,
-    waiting: '順番を待っています…',
-    listening: '音声を聞き取っています…',
+    waiting: '文字起こしの順番を待っています…',
+    running: '文字起こし中…',
+    elapsed: (sec: number) => `（経過${sec}秒）`,
+    /** 終わったことと、次に何をすればよいか。label は「記録する」または「保存する」。 */
+    finished: (label: string) => `文字起こしが終わりました。手直しして「${label}」を押してください。`,
     failed: '文字起こしに失敗しました',
-    retry: '再試行',
-    retrying: '再試行しています…',
-    dismiss: '閉じる',
-    dismissHint: '閉じると、このカードは表示されなくなります。録音した音声はデータの置き場に残ります。',
+    /** 失敗の理由を状態1行に続けて添える。 */
+    reason: (message: string) => `（${message}）`,
+    retry: 'もう一度文字起こしする',
     warningPrefix: '注意：',
   },
   search: {
     placeholder: '本文・見出し・文字起こしのまま（編集前）の文を検索',
-    run: '検索',
+    run: '検索する',
     empty: '見つかりませんでした',
     resultCount: (n: number) => `${n}件`,
     /** 結果カードに小さく出す「どこが一致したか」。 */
@@ -198,17 +210,20 @@ export const ja = {
     recorded: (date: string, days: number) => `次の復習は${date}、${days}日後です。`,
     autoRetired:
       '次の復習までの間隔（日数）が1年に達したので、この記録の復習を終えました。カレンダーからいつでも読めます。',
-    undo: '取り消す',
+    undo: '評価を取り消す',
     undone: '直前の評価を取り消しました',
     // その場の追記（要件 R5。復習の履歴はリセットしない）
-    appendLabel: '思い出したことを書き足す（任意）',
-    appendPlaceholder: '補足や、思い出せなかった理由など',
+    /**
+     * 1 行の欄の placeholder 兼、読み上げ用の名前。
+     * 「（任意）」を付けない——幅400pxでは1行に収まらず、欄からはみ出して切れる。
+     * 書かなくてよいことは、空のまま評価ボタンを押せることで分かる。
+     */
+    appendLabel: '思い出したことを書き足す',
     appendSave: '書き足す',
     appendSaving: '書き足しています…',
     appendSaved: '書き足しました',
-    // 復習を終える（内部では retire と呼ぶもの）
-    retire: 'もう復習しない',
-    retireConfirm: RETIRE_CONFIRM,
+    // 復習を終える（内部では retire と呼ぶもの）。記録カードから再開できるので確認しない。
+    retire: '復習を終える',
     retired: 'この記録の復習を終えました',
     // 記録カードの「復習の記録」に出す履歴の1行。
     /** 評価した行。「9月10日（木） 思い出せた → 次回 9月16日（火）」 */
@@ -224,10 +239,10 @@ export const ja = {
     dropZone: '画像をここにドロップ／貼り付け',
     choose: 'ファイルを選ぶ',
     uploading: 'アップロード中…',
-    delete: '削除',
-    confirmDelete: 'この画像を削除しますか？',
-    manage: '画像を追加・削除',
-    manageClose: '画像の追加・削除を閉じる',
+    delete: '画像を削除する',
+    deleteDialogTitle: '画像を削除する',
+    deleteDialogBody: 'この画像をこの記録から消します。元に戻せません。',
+    manage: '画像を追加・削除する',
   },
   settings: {
     title: '設定',
@@ -335,7 +350,7 @@ export const ja = {
     notePurpose: '目的',
     noteEffect: '効果',
     noteExample: '例',
-    save: '保存',
+    save: '保存する',
     saving: '実行中…',
     saved: '保存しました',
     working: '実行中…',

@@ -4,6 +4,7 @@ import { useRef, useState } from 'preact/hooks'
 import { api, type Attachment } from '../api.ts'
 import { ja } from '../i18n/ja.ts'
 import { Lightbox } from './Lightbox.tsx'
+import { ConfirmDialog } from './ConfirmDialog.tsx'
 
 type Props = {
   entryId: string
@@ -21,6 +22,8 @@ export function Attachments({ entryId, attachments, onChanged }: Props) {
   const [uploading, setUploading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [lightbox, setLightbox] = useState<string | null>(null)
+  // 削除を尋ねている画像の id。画像の削除は元に戻せないので確認を出す（操作の原則3）。
+  const [confirmingDelete, setConfirmingDelete] = useState<string | null>(null)
   const inputRef = useRef<HTMLInputElement>(null)
 
   const images = attachments.filter((a) => a.kind === 'image')
@@ -41,7 +44,7 @@ export function Attachments({ entryId, attachments, onChanged }: Props) {
   }
 
   async function remove(id: string) {
-    if (!confirm(ja.attachments.confirmDelete)) return
+    setConfirmingDelete(null)
     setError(null)
     try {
       await api.deleteAttachment(id)
@@ -70,7 +73,7 @@ export function Attachments({ entryId, attachments, onChanged }: Props) {
         tabIndex={0}
       >
         <span>{uploading ? ja.attachments.uploading : ja.attachments.dropZone}</span>
-        <button type="button" class="button ghost" onClick={() => inputRef.current?.click()}>
+        <button type="button" class="button" onClick={() => inputRef.current?.click()}>
           {ja.attachments.choose}
         </button>
         <input
@@ -95,8 +98,8 @@ export function Attachments({ entryId, attachments, onChanged }: Props) {
               <button
                 type="button"
                 class="thumb-delete"
-                title={ja.attachments.delete}
-                onClick={() => void remove(a.id)}
+                aria-label={ja.attachments.delete}
+                onClick={() => setConfirmingDelete(a.id)}
               >
                 ×
               </button>
@@ -105,6 +108,16 @@ export function Attachments({ entryId, attachments, onChanged }: Props) {
         </div>
       )}
       {lightbox && <Lightbox src={lightbox} onClose={() => setLightbox(null)} />}
+      {confirmingDelete && (
+        <ConfirmDialog
+          title={ja.attachments.deleteDialogTitle}
+          body={ja.attachments.deleteDialogBody}
+          confirmLabel={ja.attachments.delete}
+          danger
+          onConfirm={() => void remove(confirmingDelete)}
+          onCancel={() => setConfirmingDelete(null)}
+        />
+      )}
     </div>
   )
 }

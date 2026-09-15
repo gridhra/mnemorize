@@ -6,6 +6,7 @@ import { createInitialState, retrievability } from './scheduler.ts'
 import { resetSchedule, writeScheduleState } from './reviews.ts'
 import { toState } from './schedule-state.ts'
 import { deleteAttachmentFile } from '../adapters/files.ts'
+import { attachJobsToEntry } from './transcribe.ts'
 
 export type EntryRow = {
   id: string
@@ -85,7 +86,11 @@ export function headlineOf(title: string | null, bodyMd: string): string {
     .map((l) => l.replace(/^\s*(#{1,6}|[-*+]|\d+\.)\s*/, '').trim())
     .find((l) => l.length > 0)
   if (!firstLine) return ''
-  const sentence = firstLine.split(/(?<=[。．.!?！？])/)[0] ?? firstLine
+  // 先頭 1 文を取り、末尾の句読点は落とす（見出しは文ではなく札なので点を残さない）。
+  const sentence = (firstLine.split(/(?<=[。．.!?！？])/)[0] ?? firstLine).replace(
+    /[。．.!?！？]+$/,
+    '',
+  )
   return sentence.length > 60 ? `${sentence.slice(0, 60)}…` : sentence
 }
 
@@ -145,6 +150,11 @@ export type CreateInput = {
   title?: string | null
   body_md?: string
   review_enabled?: boolean
+  /**
+   * この記録に結びつける文字起こしジョブの id。録音した音声の添付とジョブが、
+   * ここで初めてこの記録のものになる（結びつけの中身は services/transcribe.ts）。
+   */
+  transcription_job_ids?: string[]
 }
 
 /** 記録を作る。同時に schedule_state を New・翌日の境界時刻で 1 行作る（要件 S5）。 */
@@ -175,6 +185,8 @@ export function createEntry(input: CreateInput, now: Date = clockNow()): Entry {
     ).run(id, dayDate, title, bodyMd, reviewEnabled, nowIso, nowIso, nextOrder)
     // 初期状態はスケジューラのラッパーに決めさせる（state=New、期限は作成した学習日の翌日）。
     writeScheduleState(id, createInitialState(now, hour))
+    // 結びつけが失敗（見つからない id・別の記録のジョブ）したら記録ごと作らない。
+    attachJobsToEntry(input.transcription_job_ids ?? [], id)
   })()
   return getEntry(id)
 }
@@ -188,6 +200,8 @@ export type UpdateInput = {
    * ふつうの加筆修正では復習の履歴も予定もリセットしない。
    */
   reset_schedule?: boolean
+  /** 「録音して書き足す」で作った文字起こしジョブ。音声をこの記録に結びつける。 */
+  transcription_job_ids?: string[]
 }
 
 /** 記録を更新する。本文かタイトルが変わるときは、更新前の全文を entry_revisions に積む。 */
@@ -222,6 +236,7 @@ export function updateEntry(id: string, input: UpdateInput, now: Date = clockNow
     db.query(
       'UPDATE entries SET title = ?, body_md = ?, review_enabled = ?, updated_at = ? WHERE id = ?',
     ).run(nextTitle, nextBody, nextReview, nowIso, id)
+    attachJobsToEntry(input.transcription_job_ids ?? [], id)
   })()
 
   // 「最初からやり直す」が指定されたときだけ、予定を新規状態に戻す（要件 S4）。

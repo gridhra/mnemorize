@@ -27,6 +27,9 @@ const { search } = await import('./search.ts')
 const { submitReview } = await import('./reviews.ts')
 const { addAttachment } = await import('./attachments.ts')
 const { dataDir } = await import('../db/connection.ts')
+const { createJob, setAsrAdapter, waitForIdle, getJob } = await import('./transcribe.ts')
+// 見出しの規則を画面側と突き合わせるための入出力表（web/src/headline.cases.ts が正本）。
+const { HEADLINE_CASES } = await import('../../web/src/headline.cases.ts')
 
 // 1x1 の透明 PNG（attachments.test.ts と同じもの）。
 const PNG_BASE64 =
@@ -92,7 +95,18 @@ describe('記録の作成', () => {
   test('タイトルが空なら本文先頭 1 文が手がかりになる', () => {
     const e = createEntry({ body_md: '# 見出し\n\nSQLite の WAL を調べた。次は FTS5。' })
     expect(e.headline).toBe('見出し')
-    expect(headlineOf(null, 'SQLite の WAL を調べた。次は FTS5。')).toBe('SQLite の WAL を調べた。')
+    expect(headlineOf(null, 'SQLite の WAL を調べた。次は FTS5。')).toBe('SQLite の WAL を調べた')
+  })
+
+  // 画面側にも同じ規則の実装（web/src/headline.ts）がある。保存前に「見出し欄を触ったか」を
+  // 判定するために画面が必要とするもので、ずれるとサーバーとで見出しが食い違う。
+  // 同じ入出力表を両方のテストが使う。
+  describe('見出しの決め方が画面側の実装と一致する', () => {
+    for (const c of HEADLINE_CASES) {
+      test(c.name, () => {
+        expect(headlineOf(c.title, c.body)).toBe(c.expected)
+      })
+    }
   })
 })
 
@@ -233,5 +247,154 @@ describe('記録の削除', () => {
     expect(search('テスト録音')).toHaveLength(1)
     await deleteEntry(e.id)
     expect(search('テスト録音')).toHaveLength(0)
+  })
+})
+
+// ---- 録音した音声を記録に結びつける（transcription_job_ids） ----
+//
+// 文字起こしジョブは記録を作らない。結果は画面の本文欄に流れ込み、利用者が
+// 「記録する」「保存」を押したときに、そのジョブの id を添えて保存する。
+// そこで初めて音声の添付とジョブがその記録のものになる。
+
+/** 16kHz モノラル 16bit の無音 WAV（中身は使わないのでヘッダが正しければよい）。 */
+function silentWav(seconds = 1): Uint8Array {
+  const sampleRate = 16000
+  const dataSize = sampleRate * seconds * 2
+  const buf = new ArrayBuffer(44 + dataSize)
+  const view = new DataView(buf)
+  const ascii = (offset: number, s: string) => {
+    for (let i = 0; i < s.length; i++) view.setUint8(offset + i, s.charCodeAt(i))
+  }
+  ascii(0, 'RIFF')
+  view.setUint32(4, 36 + dataSize, true)
+  ascii(8, 'WAVE')
+  ascii(12, 'fmt ')
+  view.setUint32(16, 16, true)
+  view.setUint16(20, 1, true)
+  view.setUint16(22, 1, true)
+  view.setUint32(24, sampleRate, true)
+  view.setUint32(28, sampleRate * 2, true)
+  view.setUint16(32, 2, true)
+  view.setUint16(34, 16, true)
+  ascii(36, 'data')
+  view.setUint32(40, dataSize, true)
+  return new Uint8Array(buf)
+}
+
+/** whisper-cli は起動せず、決めた文章を返すだけの偽アダプタ。 */
+function fakeAsr(text: string) {
+  const segments = [{ from_ms: 0, to_ms: 1000, text }]
+  return {
+    async transcribe() {
+      return { text, segments, model: '/tmp/fake-model.bin', prompt: 'テスト' }
+    },
+  }
+}
+
+/** 文字起こしが終わったジョブを 1 つ作る。 */
+async function doneJob(text: string): Promise<string> {
+  setAsrAdapter(fakeAsr(text))
+  const job = await createJob({ wav: silentWav(), dayDate: '2026-09-15' })
+  await waitForIdle()
+  return job.id
+}
+
+describe('文字起こしジョブの結びつけ', () => {
+  test('作成時に transcription_job_ids を渡すと音声がその記録に付く', async () => {
+    const jobId = await doneJob('録音から起こした文章。')
+    const entry = createEntry({
+      day_date: '2026-09-15',
+      body_md: '録音から起こした文章。手直しした。',
+      transcription_job_ids: [jobId],
+    })
+    expect(entry.attachments).toHaveLength(1)
+    expect(entry.attachments[0]?.kind).toBe('audio')
+    const job = getJob(jobId)
+    expect(job.entry_id).toBe(entry.id)
+    // 文字起こしのまま（編集前）の文はジョブ側に残る（検索が使う）。
+    expect(job.raw_text).toBe('録音から起こした文章。')
+  })
+
+  test('更新時に渡すと、あとから録音した音声が同じ記録に付く', async () => {
+    const entry = createEntry({ day_date: '2026-09-15', body_md: '最初の本文。' })
+    const jobId = await doneJob('書き足した文章。')
+    const after = updateEntry(entry.id, {
+      body_md: '最初の本文。\n\n書き足した文章。',
+      transcription_job_ids: [jobId],
+    })
+    expect(after.attachments).toHaveLength(1)
+    expect(getJob(jobId).entry_id).toBe(entry.id)
+  })
+
+  test('1 つの記録に複数回の録音を結びつけられる', async () => {
+    const first = await doneJob('一度目の録音。')
+    const second = await doneJob('二度目の録音。')
+    const entry = createEntry({
+      day_date: '2026-09-15',
+      body_md: '一度目の録音。二度目の録音。',
+      transcription_job_ids: [first, second],
+    })
+    expect(entry.attachments.filter((a) => a.kind === 'audio')).toHaveLength(2)
+  })
+
+  test('存在しないジョブ id は ValidationError（400）で、記録も作らない', async () => {
+    expect(() =>
+      createEntry({
+        day_date: '2026-09-15',
+        body_md: '作られないはずの本文。',
+        transcription_job_ids: ['存在しないジョブ'],
+      }),
+    ).toThrow(ValidationError)
+    expect(listDay('2026-09-15')).toHaveLength(0)
+  })
+
+  test('既に別の記録に結びついたジョブは ValidationError（400）', async () => {
+    const jobId = await doneJob('先に別の記録に付いた録音。')
+    const first = createEntry({
+      day_date: '2026-09-15',
+      body_md: '先に保存した記録。',
+      transcription_job_ids: [jobId],
+    })
+    expect(() =>
+      createEntry({
+        day_date: '2026-09-15',
+        body_md: 'あとから同じ録音を付けようとした記録。',
+        transcription_job_ids: [jobId],
+      }),
+    ).toThrow(ValidationError)
+    expect(getJob(jobId).entry_id).toBe(first.id)
+  })
+
+  test('同じ記録に同じジョブをもう一度渡しても失敗しない', async () => {
+    const jobId = await doneJob('保存をやり直した録音。')
+    const entry = createEntry({
+      day_date: '2026-09-15',
+      body_md: '保存をやり直した録音。',
+      transcription_job_ids: [jobId],
+    })
+    const after = updateEntry(entry.id, {
+      body_md: '保存をやり直した録音。手直し。',
+      transcription_job_ids: [jobId],
+    })
+    expect(after.attachments.filter((a) => a.kind === 'audio')).toHaveLength(1)
+  })
+
+  test('記録を削除すると、結びついたジョブと音声のファイルも消える', async () => {
+    const jobId = await doneJob('削除と一緒に消える録音。')
+    const entry = createEntry({
+      day_date: '2026-09-15',
+      body_md: '削除と一緒に消える録音。',
+      transcription_job_ids: [jobId],
+    })
+    const audio = entry.attachments.find((a) => a.kind === 'audio')
+    const absPath = join(dataDir(), audio?.rel_path ?? '')
+    expect(await Bun.file(absPath).exists()).toBe(true)
+
+    await deleteEntry(entry.id)
+
+    const db = getDb()
+    expect(db.query('SELECT 1 FROM transcription_jobs WHERE id = ?').get(jobId)).toBeNull()
+    expect(db.query('SELECT 1 FROM attachments WHERE id = ?').get(audio?.id ?? '')).toBeNull()
+    expect(await Bun.file(absPath).exists()).toBe(false)
   })
 })

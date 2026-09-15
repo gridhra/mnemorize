@@ -208,14 +208,17 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
 export const api = {
   health: () => request<Health>('/api/health'),
-  /** 録音した WAV を送ってジョブを作る（202 で job_id が返る）。 */
+  /**
+   * 録音した WAV を送って文字起こしジョブを作る（202 で job_id が返る）。
+   * ジョブは記録を作らない。結果は SSE で受け取り、記録を保存するときに
+   * `transcription_job_ids` として添えると、音声がその記録のものになる。
+   */
   createTranscription: async (
     wav: Blob,
-    options: { entry_id?: string | null; day_date?: string | null } = {},
+    options: { day_date?: string | null } = {},
   ): Promise<{ job_id: string; job: TranscriptionJob }> => {
     const form = new FormData()
     form.append('audio', wav, 'recording.wav')
-    if (options.entry_id) form.append('entry_id', options.entry_id)
     if (options.day_date) form.append('day_date', options.day_date)
     const res = await fetch('/api/transcriptions', { method: 'POST', body: form })
     const text = await res.text()
@@ -224,21 +227,8 @@ export const api = {
     return body as { job_id: string; job: TranscriptionJob }
   },
   transcription: (id: string) => request<{ job: TranscriptionJob }>(`/api/transcriptions/${id}`),
-  /** 文字起こしジョブの一覧。status は複数指定でき、day_date でその学習日に絞れる。 */
-  transcriptions: (options: { status?: string[]; day_date?: string } = {}) => {
-    const params = new URLSearchParams()
-    for (const s of options.status ?? []) params.append('status', s)
-    if (options.day_date) params.set('day_date', options.day_date)
-    const qs = params.toString()
-    return request<{ jobs: TranscriptionJob[] }>(`/api/transcriptions${qs ? `?${qs}` : ''}`)
-  },
   retryTranscription: (id: string) =>
     request<{ job_id: string; job: TranscriptionJob }>(`/api/transcriptions/${id}/retry`, {
-      method: 'POST',
-    }),
-  /** 失敗したジョブを閉じる（サーバー側でも一覧から除く）。 */
-  dismissTranscription: (id: string) =>
-    request<{ job_id: string; job: TranscriptionJob }>(`/api/transcriptions/${id}/dismiss`, {
       method: 'POST',
     }),
   /** 進捗（部分結果）の受け口。EventSource の URL。 */
@@ -253,10 +243,18 @@ export const api = {
     title?: string | null
     body_md: string
     review_enabled?: boolean
+    /** この記録に結びつける文字起こしジョブ（録音した音声がこの記録のものになる）。 */
+    transcription_job_ids?: string[]
   }) => request<{ entry: Entry }>('/api/entries', { method: 'POST', body: JSON.stringify(input) }),
   updateEntry: (
     id: string,
-    input: { title?: string | null; body_md?: string; review_enabled?: boolean; reset_schedule?: boolean },
+    input: {
+      title?: string | null
+      body_md?: string
+      review_enabled?: boolean
+      reset_schedule?: boolean
+      transcription_job_ids?: string[]
+    },
   ) => request<{ entry: Entry }>(`/api/entries/${id}`, { method: 'PATCH', body: JSON.stringify(input) }),
   /** 記録 1 件を取り直す（追記の文字起こしが終わったあとなど）。 */
   entry: (id: string) => request<{ entry: Entry }>(`/api/entries/${id}`),

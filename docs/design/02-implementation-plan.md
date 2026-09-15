@@ -53,14 +53,15 @@
 - 「今日」の入口に出す未評価の復習件数は、Context `web/src/queue-context.ts`（`useReviewQueueRefresh`）で下位のページ・部品から更新を呼べるようにした。復習を1件評価・記録を1件作成・画面遷移のいずれでも更新する。
 - 日付の文字列計算（`addDays`・`toDateString`・月の日付一覧など）は`web/src/dates.ts`に集約した。時刻や境界時刻には触れない（学習日の境界計算は引き続き`server/adapters/clock.ts`）。
 - 新設API`GET /api/reviews/upcoming?from=&to=`（`server/services/reviews.ts`の`upcoming()`、`server/routes/reviews.ts`）：指定した学習日の範囲で、日ごとに期限が来る件数と記録の見出しを返す。カレンダーの「これからの復習」と、今日画面の「次の復習は◯月◯日にN件」の両方がこれを使う。
-- 新設`POST /api/transcriptions/:id/dismiss`（マイグレーション`0004_transcription_dismissed.sql`）：失敗した文字起こしジョブを一覧から閉じる。音声ファイルは残るので、その日を開き直せば再試行できる。
+- 新設`POST /api/transcriptions/:id/dismiss`（マイグレーション`0004_transcription_dismissed.sql`）：失敗した文字起こしジョブを一覧から閉じる。**2026-09-15に画面から使わなくなった**（文字起こしの状態はフォームの中の1行になり、「閉じる」操作そのものが無い）。APIと`dismissed_at`列は、既に閉じた記録を持つ手元のDBと食い違わないように残してある。
+- 2026-09-15：文字起こしは記録を作らなくなった。結果はフォームの本文欄に流れ込み、`POST /api/entries`・`PATCH /api/entries/:id` の `transcription_job_ids` で音声が記録に結びつく（設計01 §8、設計05 §3.4）。画面の`TranscribingCard.tsx`と`useTranscribingJobs.ts`、サーバーの自動作成・自動追記の経路は削除した。
 - 新設`POST /api/export/open`：書き出し・控えの保存先をFinderで開く。データ置き場配下のパスだけを許可する。
 - `GET /api/entries/:id`のレスポンスに`retrievability`（今の想起見込み。0〜1）を追加した。既存の`server/services/scheduler.ts`の計算をそのまま使う読み出し専用の追加で、スケジューラのパラメータやDBスキーマは変えていない。
 - 設定画面（`web/src/pages/Settings.tsx`）は、サーバーの400エラー応答が持つ`field`（どの設定キーの誤りか。例：`daily_review_limit`）でどの入力欄に赤字を出すか決めている。`server/services/settings.ts`の`SettingsValidationError`が検証時に`field`を持たせ、`server/app.ts`の共通エラーハンドラがそれを`{ error, field }`のJSONにする。`web/src/api.ts`の`ApiError`が例外にも`field`を載せる。ラベル文言（`web/src/i18n/ja.ts`）とは独立しているので、ラベルの文言を変えても表示先は壊れない。
 
 ## 人の手で確認が必要なこと
 
-- **マイクでの実録音**：自動操作ではマイク権限ダイアログを扱えないため、誰も実際の声で「録音 → 文字起こし → 記録」を通していない。手順：`bun dev` → http://localhost:5173 →「録音する」→ 権限を許可 → 30秒ほど話す →「停止して文字起こし」→ 文字起こし中カードが記録に変わる。無音トリムのしきい値（`web/src/audio/recorder.ts` 先頭の定数）はこのとき調整する。
+- **マイクでの実録音**：自動操作ではマイク権限ダイアログを扱えないため、誰も実際の声で「録音 → 文字起こし → 記録」を通していない。手順：`mise run dev` → http://localhost:5173 →「録音して記録する」→ 権限を許可 → 30秒ほど話す →「停止して文字起こし」→ 本文欄に文字が流れ込む → 手直しして「記録する」。無音トリムのしきい値（`web/src/audio/recorder.ts` 先頭の定数）はこのとき調整する。
 - Safariでの表示と録音（未確認のまま）。
 
 ## 2026-09-15時点の残課題（コードレビュー04で指摘され、未修正のもの。いずれも軽微）
@@ -68,6 +69,7 @@
 - 「予定を最初からやり直す」の直後に「直前の評価を取り消す」を押すと、リセット前の評価ログだけが消える（予定は変わらない）。取り消しはリセット後の評価に限定するのが妥当。
 - 添付削除は「ファイル削除 → 行削除」の順のため、ファイル削除後に行削除が失敗すると行だけ残る。順序を逆にするか、行削除後にファイルを消す。
 - 文字起こし失敗時のエラー文にwhisper-cliの標準エラー出力の末尾がそのまま入り、画面にも出る。利用者向けの短い文に置き換え、詳細はジョブの `error` に残す。
+- 孤児の音声の掃除は未実装：録音したが保存されなかった文字起こしジョブ（`transcription_jobs.entry_id` がNULLのまま）と、そのWAVファイルが残り続ける。個人用なので当面は許容する。
 
 ## 作業中に起きた事故と再発防止
 

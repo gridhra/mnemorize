@@ -46,6 +46,9 @@ miseを使わない場合は `bun install` / `bun run scripts/dev.ts` / `bun run
 ## ブラウザでの動作確認
 
 Claude in Chrome拡張は接続されていないことが多い。Chromeを `--remote-debugging-port` と別プロファイルで起動し、DevTools Protocolで操作する。録音ボタンは合成クリック（`element.click()`）では反応しないため `Input.dispatchMouseEvent`（先に `Page.bringToFront` を送る。背面だと入力が届かない）を使う。マイクは `--use-fake-ui-for-media-stream --use-fake-device-for-media-stream` を付ける。
+録音の中身まで確かめたいときは `--use-file-for-fake-audio-capture=<wavのパス>` で音源を差し込む。このとき
+`--disable-features=AudioServiceSandbox` が要る（音声サービスのサンドボックスがファイルを読めず、
+無音になる。2026-09-15に半日溶かした）。WAVは16bit PCM。音源は `spikes/whisper/samples/sample_a.wav`。
 
 ## 文章
 

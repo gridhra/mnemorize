@@ -12,6 +12,7 @@ process.env.MNEMORIZE_DATA_DIR = tmp
 
 const { getDb, resetDbCache } = await import('../db/connection.ts')
 const {
+  attachJobsToEntry,
   createJob,
   dismissJob,
   getJob,
@@ -24,7 +25,7 @@ const {
   subscribe,
   waitForIdle,
 } = await import('./transcribe.ts')
-const { createEntry, getEntry } = await import('./entries.ts')
+const { createEntry, getEntry, listDay } = await import('./entries.ts')
 const { parseWavHeader } = await import('../adapters/audio-files.ts')
 
 /** 16kHz モノラル 16bit の無音 WAV を作る（中身は使わないのでヘッダが正しければよい）。 */
@@ -128,7 +129,7 @@ describe('後処理（定型ハルシネーション句の除去。要件 J4）'
 })
 
 describe('ジョブの状態遷移', () => {
-  test('queued → done。記録が新しく作られ、音声が結びつく', async () => {
+  test('queued → done。記録は作られず、結果と音声はジョブに残る', async () => {
     setAsrAdapter(fakeAdapter([seg('今日は固有値の章を読んだ。'), seg('明日は演習をする。')]))
     const events: JobEvent[] = []
     const job = await createJob({ wav: makeWav(), dayDate: '2026-09-15' })
@@ -138,24 +139,59 @@ describe('ジョブの状態遷移', () => {
 
     const done = getJob(job.id)
     expect(done.status).toBe('done')
-    expect(done.entry_id).not.toBeNull()
     expect(done.raw_text).toBe('今日は固有値の章を読んだ。明日は演習をする。')
     expect(done.model).toBe('/tmp/fake-model.bin')
+    // 記録は作らない。結果は done の出来事で画面の本文欄に流れ込み、
+    // 利用者が手直しして保存したときに初めて記録になる。
+    expect(done.entry_id).toBeNull()
+    expect(listDay('2026-09-15')).toHaveLength(0)
+    // 音声はまだどの記録のものでもない。
+    expect(
+      getDb().query('SELECT entry_id FROM attachments WHERE id = ?').get(done.audio_attachment_id),
+    ).toEqual({ entry_id: null })
 
-    const entry = getEntry(done.entry_id as string)
-    expect(entry.day_date).toBe('2026-09-15')
-    expect(entry.body_md).toBe('今日は固有値の章を読んだ。明日は演習をする。')
-    expect(entry.attachments).toHaveLength(1)
-    expect(entry.attachments[0]?.kind).toBe('audio')
+    const doneEvent = events.find((e) => e.type === 'done')
+    expect(doneEvent).toBeDefined()
+    expect(doneEvent?.type === 'done' && doneEvent.text).toBe(
+      '今日は固有値の章を読んだ。明日は演習をする。',
+    )
   })
 
-  test('entry_id を渡すと本文の末尾に空行を挟んで追記する', async () => {
-    setAsrAdapter(fakeAdapter([seg('追記した内容。')]))
+  test('既存の記録の本文は、ジョブが終わっても勝手に書き換わらない', async () => {
+    setAsrAdapter(fakeAdapter([seg('書き足すつもりの内容。')]))
     const entry = createEntry({ day_date: '2026-09-15', body_md: '最初の本文。' })
-    const job = await createJob({ wav: makeWav(), entryId: entry.id })
+    const job = await createJob({ wav: makeWav(), dayDate: '2026-09-15' })
     await waitForIdle()
     expect(getJob(job.id).status).toBe('done')
-    expect(getEntry(entry.id).body_md).toBe('最初の本文。\n\n追記した内容。')
+    // 本文への反映は画面（編集中の本文欄）が行う。サーバーは触らない。
+    expect(getEntry(entry.id).body_md).toBe('最初の本文。')
+  })
+
+  test('保存のときにジョブを記録へ結びつけると、音声がその記録に付く', async () => {
+    setAsrAdapter(fakeAdapter([seg('録音した内容。')]))
+    const job = await createJob({ wav: makeWav(), dayDate: '2026-09-15' })
+    await waitForIdle()
+    const entry = createEntry({ day_date: '2026-09-15', body_md: '手直しした本文。' })
+
+    attachJobsToEntry([job.id], entry.id)
+
+    expect(getJob(job.id).entry_id).toBe(entry.id)
+    const after = getEntry(entry.id)
+    expect(after.attachments).toHaveLength(1)
+    expect(after.attachments[0]?.kind).toBe('audio')
+  })
+
+  test('別の記録に結びついたジョブを付け替えようとすると ValidationError', async () => {
+    const { ValidationError } = await import('./errors.ts')
+    setAsrAdapter(fakeAdapter([seg('一度きりの録音。')]))
+    const job = await createJob({ wav: makeWav(), dayDate: '2026-09-15' })
+    await waitForIdle()
+    const first = createEntry({ day_date: '2026-09-15', body_md: '先に保存した記録。' })
+    attachJobsToEntry([job.id], first.id)
+
+    const second = createEntry({ day_date: '2026-09-15', body_md: 'あとの記録。' })
+    expect(() => attachJobsToEntry([job.id], second.id)).toThrow(ValidationError)
+    expect(getJob(job.id).entry_id).toBe(first.id)
   })
 
   test('全セグメントが定型句なら failed（音声を認識できませんでした）', async () => {
@@ -182,21 +218,18 @@ describe('ジョブの状態遷移', () => {
     const done = getJob(job.id)
     expect(done.status).toBe('done')
     expect(done.error).toBeNull()
-    expect(getEntry(done.entry_id as string).body_md).toBe('やり直したら通った。')
+    expect(done.raw_text).toBe('やり直したら通った。')
   })
 
-  test('完了したジョブの再試行は拒否する（本文への二重追記を防ぐ）', async () => {
+  test('完了したジョブの再試行は拒否する（本文欄への二重の流し込みを防ぐ）', async () => {
     const { ValidationError } = await import('./entries.ts')
-    setAsrAdapter(fakeAdapter([seg('1 回だけ書かれる。')]))
-    const entry = createEntry({ day_date: '2026-09-15', body_md: '元の本文。' })
-    const job = await createJob({ wav: makeWav(), entryId: entry.id })
+    setAsrAdapter(fakeAdapter([seg('1 回だけ流れ込む。')]))
+    const job = await createJob({ wav: makeWav(), dayDate: '2026-09-15' })
     await waitForIdle()
     expect(getJob(job.id).status).toBe('done')
 
     expect(() => retryJob(job.id)).toThrow(ValidationError)
     await waitForIdle()
-    // 本文は 1 回ぶんのままで、同じ文章が二重に入らない。
-    expect(getEntry(entry.id).body_md).toBe('元の本文。\n\n1 回だけ書かれる。')
   })
 
   test('failed なジョブを閉じると一覧から消える（再読み込みで復帰しない）', async () => {
@@ -266,12 +299,8 @@ describe('ジョブの状態遷移', () => {
     const after = getJob(job.id)
     expect(after.status).toBe('done')
     expect(JSON.parse(after.warnings_json ?? '[]')).toHaveLength(1)
-    expect(getEntry(after.entry_id as string).body_md).toBe('本当の内容。')
-  })
-
-  test('存在しない記録を指定したら作らない', async () => {
-    setAsrAdapter(fakeAdapter([seg('あ')]))
-    await expect(createJob({ wav: makeWav(), entryId: 'no-such-entry' })).rejects.toThrow()
+    // 定型句を除いたあとの文章が done の出来事で画面に届く。
+    expect(after.raw_text).toBe('本当の内容。チャンネル登録')
   })
 })
 

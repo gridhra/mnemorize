@@ -1,4 +1,6 @@
 // 録音ボタン。押して開始、もう一度押すと停止して文字起こしに送る（要件 C1）。
+// 文字起こしの結果はこの部品の外（新規作成・編集のフォームの本文欄）に流れ込む。
+import type { ComponentChildren } from 'preact'
 import { useEffect, useRef, useState } from 'preact/hooks'
 import { api } from '../api.ts'
 import { ja } from '../i18n/ja.ts'
@@ -10,19 +12,30 @@ import {
 } from '../audio/recorder.ts'
 
 type Props = {
-  /** 記録をこれから作る場合の学習日（画面に出している日付）。 */
+  /** 画面に出している学習日。どの日の録音かをジョブに覚えさせるためだけに使う。 */
   dayDate: string
-  /** 既存の記録に追記する場合その id。 */
-  entryId?: string
-  /** ジョブができたら知らせる（一覧の先頭に「文字起こし中」カードを出すため）。 */
+  /**
+   * 文字起こしジョブができたら知らせる。
+   * ジョブは記録を作らない。結果は呼び出し元（フォーム）が本文欄に流し込む。
+   */
   onJobCreated: (jobId: string) => void
   /** 塗りつぶしの大きいボタンにする（新規作成欄の主操作）。既定は枠線のボタン。 */
   primary?: boolean
+  /** 既存の記録の編集では「録音して書き足す」という名前にする。 */
+  append?: boolean
+  /** ボタンの下に出す文字起こしの状態1行（呼び出し元が描く）。 */
+  children?: ComponentChildren
+  /**
+   * 呼び出し元が状態1行（文字起こしの行）を出しているか。
+   * 出ているあいだは「録音は最長10分です」を引っ込める——状態行は 1 つだけで、
+   * 待機中・録音中・停止後で中身だけが入れ替わる（原則B）。
+   */
+  hasStatus?: boolean
 }
 
 type Phase = 'idle' | 'preparing' | 'recording' | 'sending'
 
-export function Recorder({ dayDate, entryId, onJobCreated, primary }: Props) {
+export function Recorder({ dayDate, onJobCreated, primary, append, children, hasStatus }: Props) {
   const [phase, setPhase] = useState<Phase>('idle')
   const [elapsed, setElapsed] = useState(0)
   const [level, setLevel] = useState(0)
@@ -101,10 +114,7 @@ export function Recorder({ dayDate, entryId, onJobCreated, primary }: Props) {
         setPhase('idle')
         return
       }
-      const res = await api.createTranscription(result.wav, {
-        day_date: entryId ? null : dayDate,
-        entry_id: entryId ?? null,
-      })
+      const res = await api.createTranscription(result.wav, { day_date: dayDate })
       onJobCreated(res.job_id)
       setPhase('idle')
     } catch (e) {
@@ -119,9 +129,11 @@ export function Recorder({ dayDate, entryId, onJobCreated, primary }: Props) {
 
   return (
     <div class="recorder">
+      {/* 文言が 5 通りに変わるボタン。箱の幅は最長の文言に合わせて固定してあり、
+          押しても位置も大きさも変わらない（.toggle-record。操作の原則11a）。 */}
       <button
         type="button"
-        class={`button ${primary || recording ? 'primary' : 'ghost'}`}
+        class={`button toggle-record${primary || recording ? ' primary' : ''}`}
         disabled={busy}
         onClick={() => void (recording ? stop() : start())}
       >
@@ -131,27 +143,36 @@ export function Recorder({ dayDate, entryId, onJobCreated, primary }: Props) {
             ? ja.recorder.preparing
             : phase === 'sending'
               ? ja.recorder.sending
-              : entryId
+              : append
                 ? ja.recorder.appendToEntry
                 : ja.recorder.start}
       </button>
 
-      {recording && (
-        <span class="recorder-status">
-          <span class="badge">
-            {ja.recorder.recording} {ja.recorder.elapsed(elapsed)}
+      {/*
+        状態1行。録音ボタンのすぐ下の決まった場所に 1 つだけ置き、中身だけが入れ替わる
+        （待機中は「録音は最長10分です」、録音中は経過と音量、停止後は文字起こしの状態）。
+        以前は「最長10分」が別の行として録音ボタンの下に孤立していた（2026-09-15の指摘）。
+      */}
+      <div class="recorder-status">
+        {recording ? (
+          <span class="recorder-live">
+            <span class="badge">
+              {ja.recorder.recording} {ja.recorder.elapsed(elapsed)}
+            </span>
+            <span class="recorder-meter" aria-hidden="true">
+              <span class="recorder-meter-bar" style={`width:${meterWidth}`} />
+            </span>
           </span>
-          <span class="recorder-meter" aria-hidden="true">
-            <span class="recorder-meter-bar" style={`width:${meterWidth}`} />
-          </span>
-        </span>
-      )}
+        ) : !busy && !hasStatus ? (
+          <small class="hint">{ja.recorder.maxMinutes}</small>
+        ) : null}
+        {children}
+      </div>
 
       <small class="hint recorder-permission-hint">
         {waitingPermission ? ja.recorder.waitingPermission : ''}
       </small>
 
-      {!recording && !busy && <small class="hint">{ja.recorder.maxMinutes}</small>}
       {message && <small class="hint">{message}</small>}
       {error && (
         <p class="error">

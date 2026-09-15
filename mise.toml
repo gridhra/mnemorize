@@ -43,9 +43,14 @@ description = "正書法の乱れを一括修正する"
 run = "bun run scripts/fix-text-spacing.ts"
 
 [tasks."check:paths"]
-description = "追跡ファイルにマシン固有の絶対パス（/Users/…、/private/tmp/…、/Volumes/…）が無いか検査する（公開リポジトリへの露出を防ぐ）"
+description = "追跡ファイルにマシン固有の絶対パスが無いか検査する（公開リポジトリへの露出を防ぐ）"
 run = '''
-if git grep -n -I -E "/Users/[^n]|/private/tmp|/Volumes/" -- . ':!*.lock'; then
+# 検査するのは、そのマシンでしか通らない絶対パス（ホーム配下、一時ディレクトリ、外付けの
+# ボリューム）。この検査の説明や検査式そのものが自分自身に引っかかるので、意図して例を
+# 書いている行の末尾に check:paths:ignore と書いておくと、その行は見逃す。
+hits=$(git grep -n -I -E "/Users/[^n]|/private/tmp|/Volumes/" -- . ':!*.lock' | grep -v "check:paths:ignore" || true)  # check:paths:ignore
+if [ -n "$hits" ]; then
+  echo "$hits" >&2
   echo "マシン固有の絶対パスが追跡ファイルに含まれています。~ や相対パスに直してください。" >&2
   exit 1
 fi
