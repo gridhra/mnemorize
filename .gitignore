@@ -1,0 +1,6 @@
+node_modules/
+web/dist/
+.DS_Store
+spikes/whisper/samples/*.wav
+spikes/recorder/out/
+spikes/whisper/results/

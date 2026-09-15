@@ -1,0 +1,307 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8" />
+<title>録音スパイク</title>
+<style>
+  body { font-family: system-ui, sans-serif; max-width: 640px; margin: 2rem auto; padding: 0 1rem; }
+  h1 { font-size: 1.2rem; }
+  button { font-size: 1rem; padding: 0.5rem 1rem; margin-right: 0.5rem; margin-bottom: 0.5rem; }
+  #meter-wrap { width: 100%; height: 16px; background: #eee; border-radius: 8px; overflow: hidden; margin: 0.5rem 0; }
+  #meter-bar { height: 100%; width: 0%; background: #4caf50; transition: width 60ms linear; }
+  #status { white-space: pre-wrap; background: #f5f5f5; padding: 0.75rem; border-radius: 6px; font-size: 0.9rem; }
+  #elapsed { font-variant-numeric: tabular-nums; font-weight: bold; }
+</style>
+</head>
+<body>
+  <h1>録音スパイク（whisper.cpp 用 16kHz WAV 生成テスト）</h1>
+
+  <div>
+    <button id="btn-start">マイクで録音開始</button>
+    <button id="btn-stop" disabled>録音停止</button>
+    <button id="btn-test">テスト信号で録音（3秒・マイク不要）</button>
+  </div>
+
+  <p>経過時間: <span id="elapsed">0.0</span> 秒</p>
+  <div id="meter-wrap"><div id="meter-bar"></div></div>
+
+  <h2>結果</h2>
+  <div id="status">まだ録音していません。</div>
+
+  <script>
+    const btnStart = document.getElementById("btn-start");
+    const btnStop = document.getElementById("btn-stop");
+    const btnTest = document.getElementById("btn-test");
+    const elapsedEl = document.getElementById("elapsed");
+    const meterBar = document.getElementById("meter-bar");
+    const statusEl = document.getElementById("status");
+
+    const TARGET_SAMPLE_RATE = 16000;
+
+    let audioContext = null;
+    let workletNode = null;
+    let sourceNode = null;
+    let mediaStream = null;
+    let chunks = []; // Float32Array の配列（audioContext.sampleRate のまま蓄積）
+    let recording = false;
+    let startTime = 0;
+    let elapsedTimer = null;
+
+    function setStatus(text) {
+      statusEl.textContent = text;
+    }
+
+    function updateElapsed() {
+      const sec = (performance.now() - startTime) / 1000;
+      elapsedEl.textContent = sec.toFixed(1);
+    }
+
+    function computeRms(float32) {
+      let sum = 0;
+      for (let i = 0; i < float32.length; i++) sum += float32[i] * float32[i];
+      return Math.sqrt(sum / float32.length);
+    }
+
+    // AudioContext を作り、Worklet を登録して録音用ノードを用意する。
+    // 必ずユーザー操作（クリックハンドラ）の中から呼ぶこと。
+    // Safari などで自動再生ポリシーにより suspended 状態で生成されることがあるため resume() する。
+    async function setupAudioContext() {
+      const ctx = new AudioContext({ sampleRate: TARGET_SAMPLE_RATE });
+      if (ctx.state === "suspended") {
+        await ctx.resume();
+      }
+      await ctx.audioWorklet.addModule("/recorder-worklet.js");
+
+      if (ctx.sampleRate !== TARGET_SAMPLE_RATE) {
+        console.warn(
+          `AudioContext のサンプルレート指定(${TARGET_SAMPLE_RATE}Hz)が尊重されず、実際は ${ctx.sampleRate}Hz で動作しています。リサンプリング処理で 16kHz に変換します。`,
+        );
+      }
+      return ctx;
+    }
+
+    function startCollecting(ctx, source) {
+      chunks = [];
+      const node = new AudioWorkletNode(ctx, "recorder-processor");
+      node.port.onmessage = (event) => {
+        const float32 = event.data;
+        chunks.push(float32);
+        const rms = computeRms(float32);
+        // 目安として RMS(0〜約0.5想定)をメーターの幅(0〜100%)にマッピング
+        const pct = Math.min(100, rms * 200);
+        meterBar.style.width = pct + "%";
+      };
+      source.connect(node);
+      // 重要: Web Audio はグラフが destination まで繋がっていないと
+      // 処理自体が実行されない（Chrome 系ブラウザで顕著）。
+      // Worklet の出力音声は不要なので、ゲイン0のノードを介して
+      // destination に繋ぎ、グラフを "生かして" 処理を回し続ける。
+      const silentGain = ctx.createGain();
+      silentGain.gain.value = 0;
+      node.connect(silentGain);
+      silentGain.connect(ctx.destination);
+      return node;
+    }
+
+    // Float32(-1..1) の配列を、必要なら 16kHz へ線形補間リサンプリングしたうえで
+    // Int16 PCM に変換し、44バイトの標準 WAV ヘッダを付与して Blob を返す。
+    function encodeWav(float32Chunks, sourceSampleRate) {
+      // まず全チャンクを1本の Float32Array に結合
+      let totalLength = 0;
+      for (const c of float32Chunks) totalLength += c.length;
+      const merged = new Float32Array(totalLength);
+      let offset = 0;
+      for (const c of float32Chunks) {
+        merged.set(c, offset);
+        offset += c.length;
+      }
+
+      // サンプルレートが目標と異なる場合は線形補間でリサンプリング
+      let resampled = merged;
+      if (sourceSampleRate !== TARGET_SAMPLE_RATE) {
+        const ratio = sourceSampleRate / TARGET_SAMPLE_RATE;
+        const newLength = Math.round(merged.length / ratio);
+        resampled = new Float32Array(newLength);
+        for (let i = 0; i < newLength; i++) {
+          const srcPos = i * ratio;
+          const i0 = Math.floor(srcPos);
+          const i1 = Math.min(i0 + 1, merged.length - 1);
+          const frac = srcPos - i0;
+          resampled[i] = merged[i0] * (1 - frac) + merged[i1] * frac;
+        }
+      }
+
+      // Float32(-1..1) -> Int16 PCM
+      const int16 = new Int16Array(resampled.length);
+      for (let i = 0; i < resampled.length; i++) {
+        let s = Math.max(-1, Math.min(1, resampled[i]));
+        int16[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
+      }
+
+      const numChannels = 1;
+      const bitsPerSample = 16;
+      const byteRate = TARGET_SAMPLE_RATE * numChannels * (bitsPerSample / 8);
+      const blockAlign = numChannels * (bitsPerSample / 8);
+      const dataSize = int16.length * 2;
+      const headerSize = 44;
+      const buffer = new ArrayBuffer(headerSize + dataSize);
+      const view = new DataView(buffer);
+
+      function writeAscii(offset, str) {
+        for (let i = 0; i < str.length; i++) view.setUint8(offset + i, str.charCodeAt(i));
+      }
+
+      writeAscii(0, "RIFF");
+      view.setUint32(4, 36 + dataSize, true);
+      writeAscii(8, "WAVE");
+      writeAscii(12, "fmt ");
+      view.setUint32(16, 16, true); // fmt チャンクサイズ(PCMは16)
+      view.setUint16(20, 1, true); // audio format = 1 (PCM)
+      view.setUint16(22, numChannels, true);
+      view.setUint32(24, TARGET_SAMPLE_RATE, true);
+      view.setUint32(28, byteRate, true);
+      view.setUint16(32, blockAlign, true);
+      view.setUint16(34, bitsPerSample, true);
+      writeAscii(36, "data");
+      view.setUint32(40, dataSize, true);
+
+      // PCM データ本体を書き込み
+      let pcmOffset = headerSize;
+      for (let i = 0; i < int16.length; i++) {
+        view.setInt16(pcmOffset, int16[i], true);
+        pcmOffset += 2;
+      }
+
+      return new Blob([buffer], { type: "audio/wav" });
+    }
+
+    async function uploadWav(blob) {
+      setStatus("アップロード中...");
+      const res = await fetch("/upload", {
+        method: "POST",
+        headers: { "Content-Type": "audio/wav" },
+        body: blob,
+      });
+      const json = await res.json();
+      if (!res.ok) {
+        setStatus("エラー: " + JSON.stringify(json, null, 2));
+        return;
+      }
+      setStatus(
+        [
+          `ファイル名: ${json.filename}`,
+          `サンプルレート: ${json.sampleRate} Hz`,
+          `チャンネル数: ${json.channels}`,
+          `ビット深度: ${json.bitsPerSample} bit`,
+          `長さ: ${json.durationSeconds} 秒`,
+          `ファイルサイズ: ${json.fileSizeBytes} バイト`,
+        ].join("\n"),
+      );
+    }
+
+    async function teardownAudio() {
+      if (elapsedTimer) {
+        clearInterval(elapsedTimer);
+        elapsedTimer = null;
+      }
+      if (sourceNode) {
+        try { sourceNode.disconnect(); } catch (e) {}
+        sourceNode = null;
+      }
+      if (workletNode) {
+        try { workletNode.disconnect(); } catch (e) {}
+        workletNode = null;
+      }
+      if (mediaStream) {
+        for (const track of mediaStream.getTracks()) track.stop();
+        mediaStream = null;
+      }
+      if (audioContext) {
+        await audioContext.close();
+        audioContext = null;
+      }
+      meterBar.style.width = "0%";
+    }
+
+    async function finishRecording() {
+      const ctx = audioContext;
+      const sourceSampleRate = ctx.sampleRate;
+      await teardownAudio();
+      recording = false;
+      btnStart.disabled = false;
+      btnTest.disabled = false;
+      btnStop.disabled = true;
+
+      if (chunks.length === 0) {
+        setStatus("録音データがありませんでした。");
+        return;
+      }
+      setStatus("WAV を生成しています...");
+      const blob = encodeWav(chunks, sourceSampleRate);
+      await uploadWav(blob);
+    }
+
+    btnStart.addEventListener("click", async () => {
+      try {
+        btnStart.disabled = true;
+        btnTest.disabled = true;
+        setStatus("マイクへのアクセスを要求しています...");
+        mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+
+        audioContext = await setupAudioContext();
+        sourceNode = audioContext.createMediaStreamSource(mediaStream);
+        workletNode = startCollecting(audioContext, sourceNode);
+
+        recording = true;
+        startTime = performance.now();
+        elapsedTimer = setInterval(updateElapsed, 100);
+        btnStop.disabled = false;
+        setStatus("録音中です。停止ボタンを押すと送信します。");
+      } catch (err) {
+        setStatus("マイクの取得に失敗しました: " + err.message);
+        btnStart.disabled = false;
+        btnTest.disabled = false;
+      }
+    });
+
+    btnStop.addEventListener("click", async () => {
+      if (!recording) return;
+      btnStop.disabled = true;
+      setStatus("録音を停止し、送信準備をしています...");
+      await finishRecording();
+    });
+
+    btnTest.addEventListener("click", async () => {
+      try {
+        btnTest.disabled = true;
+        btnStart.disabled = true;
+        setStatus("テスト信号（440Hz 正弦波）で3秒間録音します...");
+
+        audioContext = await setupAudioContext();
+        const osc = audioContext.createOscillator();
+        osc.frequency.value = 440;
+        osc.type = "sine";
+        sourceNode = osc;
+        workletNode = startCollecting(audioContext, osc);
+        osc.start();
+
+        recording = true;
+        startTime = performance.now();
+        elapsedTimer = setInterval(updateElapsed, 100);
+        btnStop.disabled = false;
+
+        setTimeout(async () => {
+          if (!recording) return; // 途中で手動停止された場合は何もしない
+          osc.stop();
+          btnStop.disabled = true;
+          await finishRecording();
+        }, 3000);
+      } catch (err) {
+        setStatus("テスト信号の録音に失敗しました: " + err.message);
+        btnStart.disabled = false;
+        btnTest.disabled = false;
+      }
+    });
+  </script>
+</body>
+</html>

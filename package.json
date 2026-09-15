@@ -1,0 +1,24 @@
+{
+  "name": "mnemorize",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "bun run scripts/dev.ts",
+    "dev:server": "bun run --hot server/index.ts",
+    "dev:web": "vite --config web/vite.config.ts",
+    "build": "vite build --config web/vite.config.ts",
+    "start": "MNEMORIZE_SERVE_STATIC=1 bun run server/index.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "hono": "^4.9.0",
+    "preact": "^10.27.0",
+    "ts-fsrs": "^5.4.2"
+  },
+  "devDependencies": {
+    "@preact/preset-vite": "^2.10.2",
+    "@types/bun": "^1.2.15",
+    "typescript": "^5.9.2",
+    "vite": "^6.3.5"
+  }
+}
