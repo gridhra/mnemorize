@@ -10,7 +10,7 @@ process.env.MNEMORIZE_DATA_DIR = tmp
 const { getDb, resetDbCache } = await import('../db/connection.ts')
 const { createEntry, getEntry, retireEntry, updateEntry } = await import('./entries.ts')
 const { putSettings } = await import('./settings.ts')
-const { listReviewLogs, submitReview, todayQueue, undoLastReview } = await import('./reviews.ts')
+const { listReviewLogs, submitReview, todayQueue, upcoming, undoLastReview } = await import('./reviews.ts')
 
 /** 2026-09-15 を基準にした「n 日後の hour 時」。 */
 function day(n: number, hour = 9): Date {
@@ -86,6 +86,33 @@ describe('今日の復習キュー', () => {
     expect(q.items[0]?.entry.body_md).toBe('い')
     // 翌日になればまた出る。
     expect(todayQueue(day(2, 9)).total_due).toBe(2)
+  })
+
+  test('次に期限が来る学習日とその件数を返す（今日の分は含めない）', () => {
+    // 9/15 に 2 件、9/17 に 1 件作る。初回期限はそれぞれ作成翌日（9/16 と 9/18）。
+    createEntry({ body_md: 'あ' }, day(0, 10))
+    createEntry({ body_md: 'い' }, day(0, 10))
+    createEntry({ body_md: 'う' }, day(2, 10))
+    // 9/15 の時点：今日の期限は 0 件で、次は 9/16 に 2 件。
+    const q0 = todayQueue(day(0, 20))
+    expect(q0.total_due).toBe(0)
+    expect(q0.next_due_date).toBe('2026-09-16')
+    expect(q0.next_due_count).toBe(2)
+    // 9/16 の時点：今日の 2 件は含めず、次は 9/18 の 1 件。
+    const q1 = todayQueue(day(1, 9))
+    expect(q1.total_due).toBe(2)
+    expect(q1.next_due_date).toBe('2026-09-18')
+    expect(q1.next_due_count).toBe(1)
+  })
+
+  test('復習を終えた記録は「次の復習」に数えない', () => {
+    const a = createEntry({ body_md: 'あ' }, day(0, 10))
+    const q0 = todayQueue(day(0, 20))
+    expect(q0.next_due_count).toBe(1)
+    retireEntry(a.id, day(0, 12))
+    const q1 = todayQueue(day(0, 20))
+    expect(q1.next_due_date).toBeNull()
+    expect(q1.next_due_count).toBe(0)
   })
 
   test('3 つのボタンそれぞれの次回期限を予告する', () => {
@@ -267,5 +294,40 @@ describe('検証用の時刻上書き', () => {
       if (saved === undefined) delete process.env.MNEMORIZE_FAKE_NOW
       else process.env.MNEMORIZE_FAKE_NOW = saved
     }
+  })
+})
+
+describe('これからの復習（upcoming）', () => {
+  test('期限の学習日ごとにまとめ、件数と見出しを返す', () => {
+    // 2 件とも 9/15 に作ると、初回期限はどちらも 9/16 の境界時刻。
+    createEntry({ body_md: 'FSRS の論文を読んだ' }, day(0, 14))
+    createEntry({ title: '散歩', body_md: '川沿いを歩いた' }, day(0, 15))
+    // 1 件だけ 9/16 に評価すると、その記録の期限は先（9/19）へ動く。
+    const q = todayQueue(day(1, 9))
+    const first = q.items[0]!
+    submitReview(first.entry.id, 3, day(1, 9))
+
+    const days = upcoming('2026-09-16', '2026-09-30')
+    // 評価しなかった 1 件は 9/16 のまま、評価した 1 件は 3 日後の 9/19。
+    expect(days.map((d) => [d.date, d.count])).toEqual([
+      ['2026-09-16', 1],
+      ['2026-09-19', 1],
+    ])
+    const headlines = days.flatMap((d) => d.entries.map((e) => e.headline))
+    expect(headlines.sort()).toEqual(['FSRS の論文を読んだ', '散歩'])
+  })
+
+  test('復習を終えた記録・復習しない記録・期間外は返さない', () => {
+    const a = createEntry({ body_md: '終える記録' }, day(0, 14))
+    createEntry({ body_md: '復習しない記録', review_enabled: false }, day(0, 14))
+    createEntry({ body_md: '期間の中の記録' }, day(0, 14))
+    retireEntry(a.id, day(0, 20))
+
+    // 期限はいずれも 9/16。期間を 9/17 以降にすると 1 日も返らない。
+    expect(upcoming('2026-09-17', '2026-09-30')).toEqual([])
+    const days = upcoming('2026-09-16', '2026-09-16')
+    expect(days).toHaveLength(1)
+    expect(days[0]!.count).toBe(1)
+    expect(days[0]!.entries[0]!.headline).toBe('期間の中の記録')
   })
 })

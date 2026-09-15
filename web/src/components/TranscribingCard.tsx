@@ -21,6 +21,8 @@ export function TranscribingCard({ jobId, onDone, onDismiss }: Props) {
   const [error, setError] = useState<string | null>(null)
   const [elapsed, setElapsed] = useState(0)
   const [retrying, setRetrying] = useState(false)
+  const [dismissing, setDismissing] = useState(false)
+  const [dismissError, setDismissError] = useState<string | null>(null)
   // 再試行のたびに増やして、購読（SSE）を貼り直す。
   const [attempt, setAttempt] = useState(0)
   const startedAt = useRef(Date.now())
@@ -97,6 +99,19 @@ export function TranscribingCard({ jobId, onDone, onDismiss }: Props) {
     return close
   }, [jobId, attempt])
 
+  async function dismiss() {
+    setDismissing(true)
+    setDismissError(null)
+    try {
+      await api.dismissTranscription(jobId)
+      onDismiss(jobId)
+    } catch (e) {
+      setDismissError(e instanceof Error ? e.message : ja.error.generic)
+    } finally {
+      setDismissing(false)
+    }
+  }
+
   async function retry() {
     setRetrying(true)
     try {
@@ -153,10 +168,17 @@ export function TranscribingCard({ jobId, onDone, onDismiss }: Props) {
             <button type="button" class="button" disabled={retrying} onClick={() => void retry()}>
               {retrying ? ja.transcribe.retrying : ja.transcribe.retry}
             </button>
-            <button type="button" class="button ghost" onClick={() => onDismiss(jobId)}>
+            <button type="button" class="button ghost" disabled={dismissing} onClick={() => void dismiss()}>
               {ja.transcribe.dismiss}
             </button>
           </footer>
+          <small class="hint">{ja.transcribe.dismissHint}</small>
+          {dismissError && (
+            <p class="error">
+              {ja.error.prefix}
+              {dismissError}
+            </p>
+          )}
         </>
       )}
     </article>

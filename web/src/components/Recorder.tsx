@@ -16,18 +16,19 @@ type Props = {
   entryId?: string
   /** ジョブができたら知らせる（一覧の先頭に「文字起こし中」カードを出すため）。 */
   onJobCreated: (jobId: string) => void
-  /** 大きいボタン（新規作成欄）か、小さいボタン（既存の記録への追記）か。 */
-  compact?: boolean
+  /** 塗りつぶしの大きいボタンにする（新規作成欄の主操作）。既定は枠線のボタン。 */
+  primary?: boolean
 }
 
 type Phase = 'idle' | 'preparing' | 'recording' | 'sending'
 
-export function Recorder({ dayDate, entryId, onJobCreated, compact }: Props) {
+export function Recorder({ dayDate, entryId, onJobCreated, primary }: Props) {
   const [phase, setPhase] = useState<Phase>('idle')
   const [elapsed, setElapsed] = useState(0)
   const [level, setLevel] = useState(0)
   const [message, setMessage] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [waitingPermission, setWaitingPermission] = useState(false)
   const handleRef = useRef<RecorderHandle | null>(null)
   const startedAtRef = useRef(0)
 
@@ -52,7 +53,11 @@ export function Recorder({ dayDate, entryId, onJobCreated, compact }: Props) {
     if (phase !== 'idle') return
     setError(null)
     setMessage(null)
+    setWaitingPermission(false)
     setPhase('preparing')
+    // 許可ダイアログが出たまま止まっているように見える不安を減らすため、
+    // 3 秒たっても準備中のままなら案内を出す。
+    const waitTimer = setTimeout(() => setWaitingPermission(true), 3000)
     try {
       // AudioContext の生成と resume はこのクリック処理の中で行う必要がある。
       const handle = await startRecording({
@@ -68,8 +73,18 @@ export function Recorder({ dayDate, entryId, onJobCreated, compact }: Props) {
       setElapsed(0)
       setPhase('recording')
     } catch (e) {
+      if (!(e instanceof MicPermissionError)) {
+        console.error('[recorder]', e)
+      }
       setPhase('idle')
-      setError(e instanceof MicPermissionError ? ja.recorder.permissionDenied : ja.error.generic)
+      setError(
+        e instanceof MicPermissionError
+          ? ja.recorder.permissionDenied
+          : ja.recorder.startFailed(e instanceof Error ? e.name : String(e)),
+      )
+    } finally {
+      clearTimeout(waitTimer)
+      setWaitingPermission(false)
     }
   }
 
@@ -106,7 +121,7 @@ export function Recorder({ dayDate, entryId, onJobCreated, compact }: Props) {
     <div class="recorder">
       <button
         type="button"
-        class={`button ${recording ? 'primary' : compact ? 'ghost' : 'primary'}`}
+        class={`button ${primary || recording ? 'primary' : 'ghost'}`}
         disabled={busy}
         onClick={() => void (recording ? stop() : start())}
       >
@@ -126,17 +141,15 @@ export function Recorder({ dayDate, entryId, onJobCreated, compact }: Props) {
           <span class="badge">
             {ja.recorder.recording} {ja.recorder.elapsed(elapsed)}
           </span>
-          <span
-            class="recorder-meter"
-            aria-hidden="true"
-            style="display:inline-block;width:96px;height:8px;border-radius:4px;background:rgba(127,127,127,0.25);overflow:hidden;vertical-align:middle;margin-left:8px"
-          >
-            <span
-              style={`display:block;height:100%;width:${meterWidth};background:currentColor;transition:width 60ms linear`}
-            />
+          <span class="recorder-meter" aria-hidden="true">
+            <span class="recorder-meter-bar" style={`width:${meterWidth}`} />
           </span>
         </span>
       )}
+
+      <small class="hint recorder-permission-hint">
+        {waitingPermission ? ja.recorder.waitingPermission : ''}
+      </small>
 
       {!recording && !busy && <small class="hint">{ja.recorder.maxMinutes}</small>}
       {message && <small class="hint">{message}</small>}

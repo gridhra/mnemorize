@@ -9,8 +9,8 @@ import { isSaveShortcut, useIme } from '../hooks/ime.ts'
 type Props = {
   item: ReviewItem
   /** 評価を記録し終えたら呼ぶ。次のカードへ進む。 */
-  onRated: (result: { next_due_date: string; auto_retired: boolean }) => void
-  /** 卒業させたら呼ぶ。キューから外す。 */
+  onRated: (result: { next_due_date: string; interval_days: number; auto_retired: boolean }) => void
+  /** もう復習しないことにしたら呼ぶ。キューから外す。 */
   onRetired: () => void
 }
 
@@ -55,7 +55,11 @@ export function ReviewCard({ item, onRated, onRetired }: Props) {
     setError(null)
     try {
       const res = await api.submitReview(item.entry.id, rating)
-      onRated({ next_due_date: res.next_due_date, auto_retired: res.auto_retired })
+      onRated({
+        next_due_date: res.next_due_date,
+        interval_days: res.interval_days,
+        auto_retired: res.auto_retired,
+      })
     } catch (e) {
       setError(e instanceof Error ? e.message : ja.error.generic)
     } finally {
@@ -129,12 +133,20 @@ export function ReviewCard({ item, onRated, onRetired }: Props) {
 
   const images = item.entry.attachments.filter((a) => a.kind === 'image')
 
-  const buttons: { rating: ReviewRating; label: string; criterion: string; date: string; key: string }[] = [
+  const buttons: {
+    rating: ReviewRating
+    label: string
+    criterion: string
+    date: string
+    days: number
+    key: string
+  }[] = [
     {
       rating: 1,
       label: ja.review.again,
       criterion: ja.review.againCriterion,
       date: item.preview.again.date,
+      days: item.preview.again.interval_days,
       key: '1',
     },
     {
@@ -142,6 +154,7 @@ export function ReviewCard({ item, onRated, onRetired }: Props) {
       label: ja.review.good,
       criterion: ja.review.goodCriterion,
       date: item.preview.good.date,
+      days: item.preview.good.interval_days,
       key: '2',
     },
     {
@@ -149,6 +162,7 @@ export function ReviewCard({ item, onRated, onRetired }: Props) {
       label: ja.review.easy,
       criterion: ja.review.easyCriterion,
       date: item.preview.easy.date,
+      days: item.preview.easy.interval_days,
       key: '3',
     },
   ]
@@ -158,13 +172,17 @@ export function ReviewCard({ item, onRated, onRetired }: Props) {
       <header class="card-head">
         <h2 class="card-title">{item.entry.headline}</h2>
       </header>
-      <div class="card-meta review-cue">
-        <span class="badge subtle">{ja.review.createdOn(formatJapaneseDate(item.entry.day_date))}</span>
-        {images.length > 0 && <span class="badge subtle">{ja.review.attachmentCount(images.length)}</span>}
-      </div>
+      <p class="status-line review-cue">
+        {ja.review.cueLine(
+          formatJapaneseDate(item.entry.day_date),
+          images.length,
+          item.schedule.reps + 1,
+        )}
+      </p>
 
       {!opened ? (
         <div class="review-open">
+          <p class="muted review-recall-prompt">{ja.review.recallPrompt}</p>
           <button
             type="button"
             class="button primary review-open-button"
@@ -218,7 +236,7 @@ export function ReviewCard({ item, onRated, onRetired }: Props) {
             </div>
           </label>
 
-          <div class="review-ratings">
+          <div class="rating-grid">
             {buttons.map((b) => (
               <button
                 key={b.rating}
@@ -232,7 +250,7 @@ export function ReviewCard({ item, onRated, onRetired }: Props) {
                   {b.label}
                 </span>
                 <small class="rating-criterion">{b.criterion}</small>
-                <small class="rating-next">{ja.review.nextOn(jpDate(b.date))}</small>
+                <small class="rating-next">{ja.review.nextPreview(jpDate(b.date), b.days)}</small>
               </button>
             ))}
           </div>

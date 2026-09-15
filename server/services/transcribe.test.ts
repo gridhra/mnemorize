@@ -13,6 +13,7 @@ process.env.MNEMORIZE_DATA_DIR = tmp
 const { getDb, resetDbCache } = await import('../db/connection.ts')
 const {
   createJob,
+  dismissJob,
   getJob,
   listJobs,
   postprocess,
@@ -196,6 +197,30 @@ describe('ジョブの状態遷移', () => {
     await waitForIdle()
     // 本文は 1 回ぶんのままで、同じ文章が二重に入らない。
     expect(getEntry(entry.id).body_md).toBe('元の本文。\n\n1 回だけ書かれる。')
+  })
+
+  test('failed なジョブを閉じると一覧から消える（再読み込みで復帰しない）', async () => {
+    setAsrAdapter(fakeAdapter([], 'whisper-cli が失敗しました（終了コード 1）'))
+    const job = await createJob({ wav: makeWav(), dayDate: '2026-09-15' })
+    await waitForIdle()
+    expect(getJob(job.id).status).toBe('failed')
+    expect(listJobs('failed').map((j) => j.id)).toContain(job.id)
+
+    const dismissed = dismissJob(job.id)
+    expect(dismissed.dismissed_at).not.toBeNull()
+    expect(listJobs('failed').map((j) => j.id)).not.toContain(job.id)
+    expect(listJobs(['queued', 'running', 'failed']).map((j) => j.id)).not.toContain(job.id)
+    // getJob（id 直指定）では引き続き読める（元の音声などを見返せるようにするため）。
+    expect(getJob(job.id).status).toBe('failed')
+  })
+
+  test('queued / running / done のジョブは閉じられない', async () => {
+    const { ValidationError } = await import('./entries.ts')
+    setAsrAdapter(fakeAdapter([seg('完了した。')]))
+    const job = await createJob({ wav: makeWav(), dayDate: '2026-09-15' })
+    await waitForIdle()
+    expect(getJob(job.id).status).toBe('done')
+    expect(() => dismissJob(job.id)).toThrow(ValidationError)
   })
 
   test('一覧は status を複数指定でき、day_date で絞れる', async () => {

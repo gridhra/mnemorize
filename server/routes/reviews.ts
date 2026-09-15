@@ -1,13 +1,24 @@
 // 復習キューと評価の記録。ロジックは services/reviews.ts にある。
 import { Hono } from 'hono'
 import { ValidationError } from '../services/entries.ts'
-import { listReviewLogs, submitReview, todayQueue, undoLastReview } from '../services/reviews.ts'
+import { listReviewLogs, submitReview, todayQueue, upcoming, undoLastReview } from '../services/reviews.ts'
 import { isReviewRating } from '../services/scheduler.ts'
 
 const app = new Hono()
 
 /** 今日の復習キュー（上限適用後）と、繰り越し件数。 */
 app.get('/today', (c) => c.json(todayQueue()))
+
+/**
+ * これからの復習の予定。`?from=YYYY-MM-DD&to=YYYY-MM-DD`（両端を含む）。
+ * `/:entry_id/logs` より前に置く（`upcoming` が entry_id として拾われないようにするため）。
+ */
+app.get('/upcoming', (c) => {
+  const from = c.req.query('from')
+  const to = c.req.query('to')
+  if (!from || !to) throw new ValidationError('from と to が必要です')
+  return c.json({ days: upcoming(from, to) })
+})
 
 /** 評価を記録する。`{entry_id, rating: 1|3|4}` */
 app.post('/', async (c) => {

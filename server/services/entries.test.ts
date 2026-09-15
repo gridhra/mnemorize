@@ -23,6 +23,7 @@ const {
   ValidationError,
 } = await import('./entries.ts')
 const { search } = await import('./search.ts')
+const { submitReview } = await import('./reviews.ts')
 
 beforeEach(() => {
   const db = getDb()
@@ -107,9 +108,38 @@ describe('更新と履歴', () => {
     expect(after.schedule?.due).toBe(before!)
     expect(after.schedule_reset_at).toBeNull()
   })
+  test('ある版の内容で更新すると、その版に戻り、履歴は消えずに 1 つ増える', () => {
+    const e = createEntry({ title: 'v1', body_md: '最初の本文' }, new Date('2026-09-15T10:00:00'))
+    updateEntry(e.id, { title: 'v2', body_md: '二番目の本文' }, new Date('2026-09-15T11:00:00'))
+    // 画面の「この版に戻す」は、その版の title と body_md でふつうに更新するだけ。
+    const first = listRevisions(e.id)[0]!
+    const back = updateEntry(
+      e.id,
+      { title: first.title, body_md: first.body_md },
+      new Date('2026-09-15T12:00:00'),
+    )
+    expect(back.body_md).toBe('最初の本文')
+    expect(back.title).toBe('v1')
+    const revs = listRevisions(e.id)
+    expect(revs.map((r) => r.rev_no)).toEqual([2, 1])
+    // 戻す直前の内容（v2）も履歴に残るので、戻す操作は取り消せる。
+    expect(revs[0]?.body_md).toBe('二番目の本文')
+  })
   // reset_schedule=true の側の動きは services/reviews.test.ts で確かめている（段階 4 で実装した）。
   test('存在しない記録の更新は NotFoundError', () => {
     expect(() => updateEntry('no-such-id', { body_md: 'x' })).toThrow(NotFoundError)
+  })
+})
+
+describe('想起見込み（retrievability）', () => {
+  test('まだ復習していない記録では null、1 回評価すると 0〜1 の数になる', () => {
+    const e = createEntry({ body_md: '想起見込みの確認' })
+    expect(getEntry(e.id).retrievability).toBeNull()
+    submitReview(e.id, 3)
+    const after = getEntry(e.id)
+    expect(typeof after.retrievability).toBe('number')
+    expect(after.retrievability!).toBeGreaterThan(0)
+    expect(after.retrievability!).toBeLessThanOrEqual(1)
   })
 })
 

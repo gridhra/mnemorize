@@ -2,9 +2,10 @@
 import { Hono, type Context } from 'hono'
 import { streamSSE } from 'hono/streaming'
 import { ValidationError } from '../services/entries.ts'
-import { isDateString } from '../adapters/clock.ts'
+import { isDateString, now } from '../adapters/clock.ts'
 import {
   createJob,
+  dismissJob,
   getJob,
   listJobs,
   retryJob,
@@ -73,6 +74,12 @@ app.get('/:id', (c) => c.json({ job: getJob(c.req.param('id')) }))
 app.post('/:id/retry', (c) => {
   const job = retryJob(c.req.param('id'))
   return c.json({ job_id: job.id, job }, 202)
+})
+
+// 失敗したジョブを画面から閉じる（永続的に一覧から除く）。
+app.post('/:id/dismiss', (c) => {
+  const job = dismissJob(c.req.param('id'), now())
+  return c.json({ job_id: job.id, job })
 })
 
 // 進捗の配信（要件 C2）。segment / warning / done / failed を送る。

@@ -1,7 +1,7 @@
 // 復習キューの取り出しと、評価の記録。スケジューラの計算は services/scheduler.ts に閉じてある。
 import { getDb } from '../db/connection.ts'
-import { dueWindow, localDate, now as clockNow, toLocalIso } from '../adapters/clock.ts'
-import { NotFoundError, ValidationError, getEntry, type Entry } from './entries.ts'
+import { dayStart, dueWindow, isDateString, localDate, now as clockNow, toLocalIso } from '../adapters/clock.ts'
+import { NotFoundError, ValidationError, getEntry, headlineOf, type Entry } from './entries.ts'
 import { boundaryHour, getSettings } from './settings.ts'
 import {
   ALGO,
@@ -66,6 +66,13 @@ export type TodayQueue = {
   reviewed_today: number
   /** 1 日の提示上限（設定値）。 */
   daily_limit: number
+  /**
+   * 今日より後で、次に復習の期限が来る学習日（YYYY-MM-DD）。無ければ null。
+   * 対象は復習に出す設定で、まだ復習を終えていない記録だけ。
+   */
+  next_due_date: string | null
+  /** その学習日に期限が来る件数（next_due_date が null なら 0）。 */
+  next_due_count: number
 }
 
 /** DB の 1 行をスケジューラの状態に直す。 */
@@ -199,6 +206,26 @@ export function todayQueue(at: Date = clockNow()): TodayQueue {
     }
   })
 
+  // 今日の窓の終わり以降で、いちばん早く期限が来る学習日とその件数。
+  // 画面の「次の復習は◯月◯日に N 件」に使う。
+  const futureDues = db
+    .query<{ due: string }, [string]>(
+      `SELECT s.due
+         FROM schedule_state s
+         JOIN entries e ON e.id = s.entry_id
+        WHERE e.review_enabled = 1 AND e.retired_at IS NULL AND s.due >= ?
+        ORDER BY s.due ASC`,
+    )
+    .all(endIso)
+  let nextDueDate: string | null = null
+  let nextDueCount = 0
+  for (const r of futureDues) {
+    const d = localDate(new Date(r.due), hour)
+    if (nextDueDate === null) nextDueDate = d
+    if (d !== nextDueDate) break
+    nextDueCount += 1
+  }
+
   return {
     date,
     items,
@@ -206,6 +233,8 @@ export function todayQueue(at: Date = clockNow()): TodayQueue {
     carried_over: Math.max(0, rows.length - limit),
     reviewed_today: reviewedToday.length,
     daily_limit: limit,
+    next_due_date: nextDueDate,
+    next_due_count: nextDueCount,
   }
 }
 
@@ -402,4 +431,52 @@ export function listReviewLogs(entryId: string): ReviewLogRow[] {
       'SELECT * FROM review_logs WHERE entry_id = ? ORDER BY reviewed_at DESC, id DESC',
     )
     .all(entryId)
+}
+
+/** 「これからの復習」の 1 日分：その学習日に期限が来る記録の件数と見出し。 */
+export type UpcomingDay = {
+  /** 学習日（YYYY-MM-DD）。 */
+  date: string
+  count: number
+  entries: { id: string; headline: string }[]
+}
+
+/**
+ * from..to（どちらも学習日 YYYY-MM-DD、両端を含む）に期限が来る記録を日ごとにまとめる。
+ * 対象は復習に出す設定で、まだ復習を終えていない記録だけ。
+ * 期限がどの学習日に属するかは境界時刻（既定は午前 4 時）で決める。
+ * 1 件も無い日は返さない（画面で 0 件の日を出さないため）。
+ */
+export function upcoming(from: string, to: string): UpcomingDay[] {
+  if (!isDateString(from) || !isDateString(to)) {
+    throw new ValidationError('from と to は YYYY-MM-DD の形で指定してください')
+  }
+  const hour = boundaryHour()
+  const start = dayStart(from, hour)
+  const end = dayStart(to, hour)
+  end.setDate(end.getDate() + 1) // to の学習日の終わり（＝翌日の境界時刻）まで含める
+  if (end.getTime() <= start.getTime()) return []
+
+  const rows = getDb()
+    .query<{ id: string; title: string | null; body_md: string; due: string }, [string, string]>(
+      `SELECT e.id, e.title, e.body_md, s.due
+         FROM schedule_state s
+         JOIN entries e ON e.id = s.entry_id
+        WHERE e.review_enabled = 1 AND e.retired_at IS NULL AND s.due >= ? AND s.due < ?
+        ORDER BY s.due ASC, e.created_at ASC`,
+    )
+    .all(toLocalIso(start), toLocalIso(end))
+
+  const byDate = new Map<string, UpcomingDay>()
+  for (const r of rows) {
+    const date = localDate(new Date(r.due), hour)
+    let day = byDate.get(date)
+    if (!day) {
+      day = { date, count: 0, entries: [] }
+      byDate.set(date, day)
+    }
+    day.count += 1
+    day.entries.push({ id: r.id, headline: headlineOf(r.title, r.body_md) })
+  }
+  return [...byDate.values()].sort((a, b) => (a.date < b.date ? -1 : 1))
 }

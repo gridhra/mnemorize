@@ -88,7 +88,7 @@ export function Attachments({ entryId, attachments, onChanged }: Props) {
       </div>
       {error && <p class="error">{ja.error.prefix}{error}</p>}
       {images.length > 0 && (
-        <div class="thumbs">
+        <div class="thumb-grid">
           {images.map((a) => (
             <div class="thumb" key={a.id}>
               <img src={`/files/${a.rel_path}`} onClick={() => setLightbox(`/files/${a.rel_path}`)} />

@@ -2,15 +2,18 @@
 // 外界（ファイルシステム）に触れるのはここと server/adapters/ だけ。
 import { Database } from 'bun:sqlite'
 import { mkdirSync } from 'node:fs'
-import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { runMigrations } from './migrate.ts'
 
-/** データディレクトリ。環境変数 MNEMORIZE_DATA_DIR 優先、未設定なら ~/Library/Application Support/mnemorize/ */
+// server/db/ の親のさらに親（= リポジトリ直下）を基準にする。import.meta.dir 基準にすることで、
+// カレントディレクトリに依存せず堅牢にリポジトリ直下を求められる。
+const repoRoot = join(import.meta.dir, '..', '..')
+
+/** データディレクトリ。環境変数 MNEMORIZE_DATA_DIR 優先、未設定ならリポジトリ直下の data/（git 管理外） */
 export function dataDir(): string {
   const fromEnv = process.env.MNEMORIZE_DATA_DIR
   if (fromEnv && fromEnv.length > 0) return fromEnv
-  return join(homedir(), 'Library', 'Application Support', 'mnemorize')
+  return join(repoRoot, 'data')
 }
 
 export function dbPath(): string {

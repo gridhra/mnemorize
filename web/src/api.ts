@@ -34,7 +34,31 @@ export type Entry = {
   schedule_reset_at: string | null
   headline: string
   schedule: Schedule | null
+  /** 今この瞬間に思い出せる確率の推定値（0〜1）。まだ一度も復習していなければ null。 */
+  retrievability: number | null
   attachments: Attachment[]
+}
+
+/**
+ * 復習の履歴 1 行（GET /api/reviews/:entry_id/logs）。
+ * kind が 'review' の行だけ rating を持つ。reset / retire / unretire は手動操作の記録。
+ */
+export type ReviewLog = {
+  id: string
+  entry_id: string
+  reviewed_at: string
+  fsrs_instant: string | null
+  rating: number | null
+  state_before: string | null
+  stability_before: number | null
+  difficulty_before: number | null
+  elapsed_days: number | null
+  /** この復習で決まった間隔（日）。次回の期限はこの日数だけ先になる。 */
+  scheduled_days: number | null
+  due_before: string | null
+  algo: string | null
+  kind: string
+  note_md: string | null
 }
 
 export type Revision = {
@@ -130,6 +154,18 @@ export type ReviewQueue = {
   carried_over: number
   reviewed_today: number
   daily_limit: number
+  /** 今日より後で、次に復習の期限が来る学習日（YYYY-MM-DD）。無ければ null。 */
+  next_due_date: string | null
+  /** その学習日に期限が来る件数。 */
+  next_due_count: number
+}
+
+/** 「これからの復習」の 1 日分。期限が来る記録の件数と見出し。 */
+export type UpcomingDay = {
+  /** 学習日（YYYY-MM-DD）。 */
+  date: string
+  count: number
+  entries: { id: string; headline: string }[]
 }
 
 export type ReviewResult = {
@@ -182,6 +218,11 @@ export const api = {
     request<{ job_id: string; job: TranscriptionJob }>(`/api/transcriptions/${id}/retry`, {
       method: 'POST',
     }),
+  /** 失敗したジョブを閉じる（サーバー側でも一覧から除く）。 */
+  dismissTranscription: (id: string) =>
+    request<{ job_id: string; job: TranscriptionJob }>(`/api/transcriptions/${id}/dismiss`, {
+      method: 'POST',
+    }),
   /** 進捗（部分結果）の受け口。EventSource の URL。 */
   transcriptionEventsUrl: (id: string) => `/api/transcriptions/${id}/events`,
   day: (date: string) => request<{ date: string; entries: Entry[] }>(`/api/days/${date}`),
@@ -199,10 +240,15 @@ export const api = {
     id: string,
     input: { title?: string | null; body_md?: string; review_enabled?: boolean; reset_schedule?: boolean },
   ) => request<{ entry: Entry }>(`/api/entries/${id}`, { method: 'PATCH', body: JSON.stringify(input) }),
+  /** 記録 1 件を取り直す（追記の文字起こしが終わったあとなど）。 */
+  entry: (id: string) => request<{ entry: Entry }>(`/api/entries/${id}`),
   revisions: (id: string) => request<{ revisions: Revision[] }>(`/api/entries/${id}/revisions`),
   retire: (id: string) => request<{ entry: Entry }>(`/api/entries/${id}/retire`, { method: 'POST' }),
   unretire: (id: string) => request<{ entry: Entry }>(`/api/entries/${id}/unretire`, { method: 'POST' }),
   reviewsToday: () => request<ReviewQueue>('/api/reviews/today'),
+  /** from..to（両端を含む学習日）に復習の期限が来る記録を、日ごとにまとめて取る。 */
+  reviewsUpcoming: (from: string, to: string) =>
+    request<{ days: UpcomingDay[] }>(`/api/reviews/upcoming?from=${from}&to=${to}`),
   submitReview: (entryId: string, rating: ReviewRating) =>
     request<ReviewResult>('/api/reviews', {
       method: 'POST',
@@ -210,6 +256,9 @@ export const api = {
     }),
   undoReview: (entryId: string) =>
     request<ReviewResult>(`/api/reviews/${entryId}/undo`, { method: 'POST' }),
+  /** 記録 1 件の復習の履歴（新しい順）。 */
+  reviewLogs: (entryId: string) =>
+    request<{ logs: ReviewLog[] }>(`/api/reviews/${entryId}/logs`),
   search: (q: string) => request<{ hits: SearchHit[] }>(`/api/search?q=${encodeURIComponent(q)}`),
   settings: () => request<{ settings: Record<string, unknown> }>('/api/settings'),
   putSettings: (patch: Record<string, unknown>) =>
@@ -231,4 +280,7 @@ export const api = {
   exportMarkdown: () => request<ExportSummary>('/api/export/markdown'),
   exportJson: () => request<ExportSummary>('/api/export/json'),
   createSnapshot: () => request<SnapshotSummary>('/api/export/snapshot', { method: 'POST' }),
+  /** 書き出し・控えの結果を Finder で開く（データ置き場配下のパスのみ）。 */
+  openInFinder: (path: string) =>
+    request<{ ok: true }>('/api/export/open', { method: 'POST', body: JSON.stringify({ path }) }),
 }

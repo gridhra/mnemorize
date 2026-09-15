@@ -160,16 +160,24 @@ export type StartOptions = {
  * マイクが拒否されたときは MicPermissionError を投げる。
  */
 export async function startRecording(options: StartOptions = {}): Promise<RecorderHandle> {
+  // AudioContext の生成と resume はクリック処理の中（getUserMedia より前）で行う。
+  // 後で作るとブラウザによっては「クリック起因」とみなされず resume が効かないことがある。
+  const ctx = new AudioContext({ sampleRate: TARGET_SAMPLE_RATE })
+  try {
+    if (ctx.state === 'suspended') await ctx.resume()
+    await ctx.audioWorklet.addModule(workletUrl())
+  } catch (e) {
+    await ctx.close()
+    throw e
+  }
+
   let stream: MediaStream
   try {
     stream = await navigator.mediaDevices.getUserMedia({ audio: true })
   } catch (e) {
+    await ctx.close()
     throw new MicPermissionError(e instanceof Error ? e.message : String(e))
   }
-
-  const ctx = new AudioContext({ sampleRate: TARGET_SAMPLE_RATE })
-  if (ctx.state === 'suspended') await ctx.resume()
-  await ctx.audioWorklet.addModule(workletUrl())
 
   const source = ctx.createMediaStreamSource(stream)
   const node = new AudioWorkletNode(ctx, 'recorder-processor')

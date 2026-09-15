@@ -96,17 +96,23 @@ export function EntryEditor({
 
   return (
     <div class="editor">
+      {/*
+        録音ボタンは一番上に置く。新規作成では「録音して記録する」、
+        既存の記録の編集では「録音して書き足す」（どちらも呼び出し元が部品を渡す）。
+      */}
+      {recorderSlot && <div class="recorder-slot">{recorderSlot}</div>}
+
       <label class="field">
         <span class="field-label">{ja.entry.titleLabel}</span>
         <input
           class="input"
           type="text"
           value={title}
-          placeholder={ja.entry.titlePlaceholder}
           onInput={(e) => setTitle((e.target as HTMLInputElement).value)}
           onKeyDown={onKeyDown}
           {...ime.handlers}
         />
+        <small class="field-help">{ja.entry.titleHint}</small>
       </label>
       <label class="field">
         <span class="field-label">{ja.entry.bodyLabel}</span>
@@ -123,7 +129,6 @@ export function EntryEditor({
 
       {showCaptureSlots && (
         <div class="capture-slots">
-          {recorderSlot}
           <div
             class="dropzone active"
             onDragOver={(e) => e.preventDefault()}
@@ -198,7 +203,7 @@ export function EntryEditor({
             {ja.entry.cancel}
           </button>
         )}
-        <button type="button" class="button primary" disabled={!canSave || saving} onClick={() => void save()}>
+        <button type="button" class="button ghost" disabled={!canSave || saving} onClick={() => void save()}>
           {saving ? ja.entry.saving : submitLabel}
         </button>
       </div>

@@ -2,7 +2,7 @@
 import { getDb } from '../db/connection.ts'
 import { isDateString, localDate, now as clockNow, toLocalIso } from '../adapters/clock.ts'
 import { boundaryHour } from './settings.ts'
-import { createInitialState } from './scheduler.ts'
+import { createInitialState, retrievability, type ScheduleState } from './scheduler.ts'
 import { resetSchedule, writeScheduleState } from './reviews.ts'
 
 export type EntryRow = {
@@ -22,6 +22,11 @@ export type Entry = EntryRow & {
   /** タイトルが空のときの手がかり（本文先頭 1 文。要件 D4=B） */
   headline: string
   schedule: ScheduleRow | null
+  /**
+   * 今この瞬間に思い出せる確率の推定値（0〜1）。まだ一度も復習していなければ null。
+   * 計算は services/scheduler.ts の `retrievability()` に任せる（キューと同じ関数）。
+   */
+  retrievability: number | null
   attachments: AttachmentRow[]
 }
 
@@ -80,7 +85,26 @@ export function headlineOf(title: string | null, bodyMd: string): string {
   return sentence.length > 60 ? `${sentence.slice(0, 60)}…` : sentence
 }
 
-function decorate(row: EntryRow): Entry {
+/**
+ * schedule_state の 1 行をスケジューラの状態に直す。
+ * services/reviews.ts の同名の変換と同じ対応づけ（あちらは非公開なので、ここでも同じ形で持つ）。
+ */
+function toScheduleState(row: ScheduleRow): ScheduleState {
+  return {
+    due: new Date(row.due),
+    // enable_short_term: false なので New / Review しか現れない（scheduler.ts の規約 6）。
+    state: row.state === 'New' ? 'New' : 'Review',
+    stability: row.stability,
+    difficulty: row.difficulty,
+    elapsed_days: row.elapsed_days ?? 0,
+    scheduled_days: row.scheduled_days ?? 0,
+    reps: row.reps,
+    lapses: row.lapses,
+    last_review: row.last_review ? new Date(row.last_review) : null,
+  }
+}
+
+function decorate(row: EntryRow, now: Date = clockNow()): Entry {
   const db = getDb()
   const schedule = db
     .query<ScheduleRow, [string]>('SELECT * FROM schedule_state WHERE entry_id = ?')
@@ -90,7 +114,13 @@ function decorate(row: EntryRow): Entry {
       'SELECT * FROM attachments WHERE entry_id = ? ORDER BY created_at',
     )
     .all(row.id)
-  return { ...row, headline: headlineOf(row.title, row.body_md), schedule, attachments }
+  return {
+    ...row,
+    headline: headlineOf(row.title, row.body_md),
+    schedule,
+    retrievability: schedule ? retrievability(toScheduleState(schedule), now, boundaryHour()) : null,
+    attachments,
+  }
 }
 
 export function getEntry(id: string): Entry {
@@ -109,7 +139,7 @@ export function listDay(date: string): Entry[] {
       `SELECT ${ENTRY_COLUMNS} FROM entries WHERE day_date = ? ORDER BY sort_order, created_at`,
     )
     .all(date)
-  return rows.map(decorate)
+  return rows.map((r) => decorate(r))
 }
 
 /** 期間内の日ごとの件数（カレンダー表示用）。 */

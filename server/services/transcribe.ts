@@ -33,6 +33,7 @@ export type JobRow = {
   finished_at: string | null
   warnings_json: string | null
   day_date: string | null
+  dismissed_at: string | null
 }
 
 /** 後処理まで済んだセグメント。removed が true のものは本文に入れていない。 */
@@ -46,7 +47,7 @@ export type JobEvent =
   | { type: 'failed'; job_id: string; error: string }
 
 const JOB_COLUMNS = `id, entry_id, audio_attachment_id, status, raw_text, segments_json,
-  model, prompt, error, created_at, finished_at, warnings_json, day_date`
+  model, prompt, error, created_at, finished_at, warnings_json, day_date, dismissed_at`
 
 // ---- 進捗の配信（メモリ内。プロセスが生きている間だけ） ----
 
@@ -149,19 +150,23 @@ export function listJobs(
   ensureRecovered()
   const db = getDb()
   const statuses = status === undefined ? [] : Array.isArray(status) ? status : [status]
-  const where: string[] = []
+  // 閉じた（dismissed）失敗ジョブは常に除く。
+  const where: string[] = ['dismissed_at IS NULL']
   const params: string[] = []
+  let hasExplicitFilter = false
   if (statuses.length > 0) {
     where.push(`status IN (${statuses.map(() => '?').join(', ')})`)
     params.push(...statuses)
+    hasExplicitFilter = true
   }
   if (dayDate) {
     where.push('day_date = ?')
     params.push(dayDate)
+    hasExplicitFilter = true
   }
-  const clause = where.length > 0 ? `WHERE ${where.join(' AND ')}` : ''
+  const clause = `WHERE ${where.join(' AND ')}`
   // 絞り込みなしの全件は多くなりうるので、そのときだけ 50 件で頭打ちにする。
-  const limit = where.length > 0 ? '' : 'LIMIT 50'
+  const limit = hasExplicitFilter ? '' : 'LIMIT 50'
   return db
     .query<JobRow, string[]>(
       `SELECT ${JOB_COLUMNS} FROM transcription_jobs ${clause} ORDER BY created_at DESC ${limit}`,
@@ -256,6 +261,22 @@ export async function createJob(input: CreateJobInput, now: Date = clockNow()): 
   queue.push(id)
   // 呼び出し元に queued の状態を返してから動かす（202 を返してから走らせる）。
   queueMicrotask(() => void pump())
+  return getJob(id)
+}
+
+/**
+ * 失敗したジョブを画面から閉じる（永続的に一覧から除く）。
+ * `failed` 以外（queued / running / done）は状態が変わり得るので閉じられない。
+ */
+export function dismissJob(id: string, now: Date = clockNow()): JobRow {
+  ensureRecovered()
+  const job = getJob(id)
+  if (job.status !== 'failed') {
+    throw new ValidationError('失敗した文字起こしだけ閉じられます')
+  }
+  getDb()
+    .query('UPDATE transcription_jobs SET dismissed_at = ? WHERE id = ?')
+    .run(toLocalIso(now), id)
   return getJob(id)
 }
 

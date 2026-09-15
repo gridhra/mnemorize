@@ -46,18 +46,22 @@ export function getSettings(): Settings {
   return out as Settings
 }
 
-/** 整数かつ min〜max の範囲に入っているか。範囲外なら ValidationError。 */
-function intInRange(key: string, value: unknown, min: number, max: number, label: string): number {
+/**
+ * 整数かつ min〜max の範囲に入っているか。範囲外なら ValidationError。
+ * メッセージは画面の欄の下にそのまま出すので、内部の鍵名は含めない
+ * （画面のラベルと同じ文字列を使う。web/src/i18n/ja.ts の対応するラベルと合わせること）。
+ */
+function intInRange(value: unknown, min: number, max: number, label: string): number {
   const n = typeof value === 'number' ? value : Number.NaN
   if (!Number.isInteger(n) || n < min || n > max) {
-    throw new ValidationError(`${label}は ${min}〜${max} の整数で指定してください（${key}）`)
+    throw new ValidationError(`${label}は${min}〜${max}の整数で指定してください。`)
   }
   return n
 }
 
-function asString(key: string, value: unknown, label: string): string {
+function asString(value: unknown, label: string): string {
   if (typeof value !== 'string') {
-    throw new ValidationError(`${label}は文字列で指定してください（${key}）`)
+    throw new ValidationError(`${label}は文字列で指定してください。`)
   }
   return value
 }
@@ -66,43 +70,43 @@ function asString(key: string, value: unknown, label: string): string {
  * 改行区切りのリスト。文字列の配列と、改行で区切った 1 本の文字列のどちらでも受ける
  * （画面は配列で送るが、手で API を叩くときは改行区切りのほうが書きやすい）。
  */
-function asStringList(key: string, value: unknown, label: string): string[] {
+function asStringList(value: unknown, label: string): string[] {
   if (Array.isArray(value)) {
     if (!value.every((v) => typeof v === 'string')) {
-      throw new ValidationError(`${label}は文字列の配列で指定してください（${key}）`)
+      throw new ValidationError(`${label}は文字列の配列で指定してください。`)
     }
     return value.map((v) => (v as string).trim()).filter((v) => v.length > 0)
   }
   if (typeof value === 'string') {
     return value.split('\n').map((v) => v.trim()).filter((v) => v.length > 0)
   }
-  throw new ValidationError(`${label}は文字列の配列か改行区切りの文字列で指定してください（${key}）`)
+  throw new ValidationError(`${label}は文字列の配列か改行区切りの文字列で指定してください。`)
 }
 
 /**
  * 鍵ごとに値を検証して、保存してよい形に直す。
  * 型が合わない値を素通しすると、読み出し側が既定値に読み替えて「設定したのに効かない」状態になる
- * （例：auto_retire に文字列 "yes" が入ると、厳密比較に外れて自動卒業が黙って無効になる）。
+ * （例：auto_retire に文字列 "yes" が入ると、厳密比較に外れて自動で復習を終える動作が黙って無効になる）。
  */
 function validateSetting(key: keyof typeof DEFAULT_SETTINGS, value: unknown): unknown {
   switch (key) {
     case 'boundary_hour':
-      return intInRange(key, value, 0, 23, '一日の境界時刻')
+      return intInRange(value, 0, 23, '日付の切り替え時刻')
     case 'daily_review_limit':
-      return intInRange(key, value, 1, 200, '1 日の復習上限')
+      return intInRange(value, 1, 200, '1日に出す復習の上限')
     case 'auto_retire':
       if (typeof value !== 'boolean') {
-        throw new ValidationError(`自動卒業の設定は true か false で指定してください（${key}）`)
+        throw new ValidationError('間隔が1年に達したら復習を終える設定はオンかオフで指定してください。')
       }
       return value
     case 'hallucination_phrases':
-      return asStringList(key, value, 'ハルシネーション定型句')
+      return asStringList(value, '無音のときに出やすい誤認識')
     case 'whisper_model_path':
-      return asString(key, value, 'Whisper モデルのパス')
+      return asString(value, 'モデルファイルの場所')
     case 'glossary':
-      return asString(key, value, '専門用語リスト')
+      return asString(value, '覚えさせたい言葉')
     case 'snapshot_copy_dir':
-      return asString(key, value, 'スナップショットのコピー先')
+      return asString(value, '控えのコピー先')
   }
 }
 
